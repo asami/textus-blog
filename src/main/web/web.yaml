@@ -1,4 +1,6 @@
 expose:
+  blog-component.blog.import-post-tree: protected
+  blog-component.blog.register-post: protected
   blog-component.blog.create-post: protected
   blog-component.blog.get-post: public
   blog-component.blog.search-posts: public
@@ -10,12 +12,24 @@ expose:
   blog-component.blog.sync-inline-images: protected
   blog-component.blog.search-inline-images: public
 form:
+  blog-component.blog.import-post-tree:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
+    stayOnError: true
+  blog-component.blog.register-post:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
+    stayOnError: true
+    controls:
+      content:
+        type: textarea
+        required: true
   blog-component.blog.create-post:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
     stayOnError: true
     controls:
-      body:
+      content:
         type: textarea
         required: true
   blog-component.blog.search-posts:

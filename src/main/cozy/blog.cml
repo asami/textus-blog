@@ -17,7 +17,10 @@ This model keeps the image binding pattern explicit:
 - `BlogPost.authorAccountId` ties blog authoring to a user account.
 - `BlogPost` supports draft, published, and inactive states.
 - Public blog read/search exposes published active posts.
-- `BlogInlineImage` tracks images discovered from `img` tags in article body.
+- `BlogPost.content` stores the canonical HTML article fragment.
+- `ImportPostTree` accepts a local-previewable HTML file tree archive and uses
+  CNCF standard HTML tree values to extract article content.
+- `BlogInlineImage` tracks images discovered from `img` tags in article content.
 
 # SERVICE
 
@@ -29,6 +32,42 @@ Operations for authoring public blog posts and associating images with
 entities.
 
 ### OPERATION
+
+#### importPostTree
+
+##### TYPE
+
+COMMAND
+
+##### INPUT
+
+###### TYPE
+
+ImportPostTree
+
+##### OUTPUT
+
+###### TYPE
+
+RegisterBlogPostResult
+
+#### registerPost
+
+##### TYPE
+
+COMMAND
+
+##### INPUT
+
+###### TYPE
+
+RegisterBlogPost
+
+##### OUTPUT
+
+###### TYPE
+
+RegisterBlogPostResult
 
 #### createPost
 
@@ -289,9 +328,11 @@ extends = ["SimpleEntity"]
 ### DESCRIPTION
 
 Blog article entity. `authorAccountId` references the user account that owns
-the draft. `primaryImageId` references the image used as the main visual.
-Additional images are represented by `EntityImageBinding`, and inline `img`
-tag occurrences are tracked by `BlogInlineImage`.
+the draft. `content` stores the canonical HTML article fragment extracted from
+full HTML input or accepted directly by `registerPost`. `primaryImageId`
+references the image used as the main visual. Additional images are represented
+by `EntityImageBinding`, and inline `img` tag occurrences are tracked by
+`BlogInlineImage`.
 
 Public read/search should expose only posts whose draft status is published and
 whose active status is active. Draft and inactive posts remain author/admin
@@ -304,7 +345,7 @@ surfaces.
 | id              | entityid | 1            | ID             |                 |
 | slug            | string   | 1            | Slug           | release-note    |
 | title           | string   | 1            | Title          | Release note    |
-| body            | string   | 1            | Body           | Article markup  |
+| content         | string   | 1            | Content        | HTML fragment   |
 | authorAccountId | entityid | 1            | Author account |                 |
 | primaryImageId  | entityid | ?            | Primary image  |                 |
 | draftStatus     | string   | 1            | Draft status   | Draft           |
@@ -366,7 +407,8 @@ extends = ["SimpleEntity"]
 
 ### DESCRIPTION
 
-Image occurrence extracted from an `img` tag in a blog article body.
+Image occurrence extracted from an `img` tag in a blog article content
+fragment.
 
 This entity records source markup details separately from the generic
 `EntityImageBinding` link. A synchronized inline image should have a
@@ -387,6 +429,52 @@ corresponding `EntityImageBinding` row with `role = inline`.
 
 # COMMAND
 
+## ImportPostTree
+
+### DESCRIPTION
+
+User-facing bulk import command. `archiveBlobId` points to a Blob containing a
+Blog article file tree. The tree must contain `META-INF/blog.yaml`; metadata in
+that file is authoritative, and missing values may fall back to the HTML head.
+`treeRootPath` is the local development-driver input for an already expanded
+tree.
+
+The entry HTML may be a full HTML document. BlogComponent parses it through CNCF
+standard HTML tree values, extracts the article fragment, resolves relative
+image paths, and calls `RegisterBlogPost`.
+
+### ATTRIBUTE
+
+| name            | type     | multiplicity |
+|-----------------+----------+--------------|
+| archiveBlobId   | entityid | ?            |
+| treeRootPath    | string   | ?            |
+| entryHtmlPath   | string   | ?            |
+| authorAccountId | entityid | 1            |
+| publish         | boolean  | ?            |
+
+## RegisterBlogPost
+
+### DESCRIPTION
+
+Lower-level bulk registration command. `content` is a normalized HTML fragment.
+`entityImages` represents thumbnail/cover/gallery style Entity images.
+`inlineImages` represents images embedded in the HTML content.
+
+### ATTRIBUTE
+
+| name            | type                | multiplicity |
+|-----------------+---------------------+--------------|
+| slug            | string              | 1            |
+| title           | string              | ?            |
+| content         | string              | 1            |
+| authorAccountId | entityid            | 1            |
+| publish         | boolean             | ?            |
+| description     | string              | ?            |
+| canonicalPath   | string              | ?            |
+| entityImages    | BlogEntityImageSpec | *            |
+| inlineImages    | BlogInlineImageSpec | *            |
+
 ## CreateBlogPost
 
 ### ATTRIBUTE
@@ -395,7 +483,7 @@ corresponding `EntityImageBinding` row with `role = inline`.
 |-----------------+----------+--------------|
 | slug            | string   | 1            |
 | title           | string   | 1            |
-| body            | string   | 1            |
+| content         | string   | 1            |
 | authorAccountId | entityid | 1            |
 | primaryImageId  | entityid | ?            |
 | draftStatus     | string   | 1            |
@@ -450,7 +538,7 @@ corresponding `EntityImageBinding` row with `role = inline`.
 
 ### DESCRIPTION
 
-Command payload for scanning article body `img` tags and synchronizing their
+Command payload for scanning article content `img` tags and synchronizing their
 managed image bindings.
 
 ### ATTRIBUTE
@@ -505,6 +593,54 @@ managed image bindings.
 | limit      | int      | ?            |
 
 # VALUE
+
+## BlogEntityImageSpec
+
+### DESCRIPTION
+
+Image specification for Entity-level BlogPost image bindings such as thumbnail,
+primary, cover, and gallery.
+
+### ATTRIBUTE
+
+| name            | type     | multiplicity |
+|-----------------+----------+--------------|
+| path            | string   | ?            |
+| existingImageId | entityid | ?            |
+| existingBlobId  | entityid | ?            |
+| role            | string   | 1            |
+| sortOrder       | int      | ?            |
+| caption         | string   | ?            |
+| contentType     | string   | ?            |
+| checksum        | string   | ?            |
+
+## BlogInlineImageSpec
+
+### DESCRIPTION
+
+Image specification for an image embedded in Blog HTML content. File-tree import
+uses `path` resolved relative to the entry HTML. Direct bulk registration may
+use `clientId` for `cid:` references.
+
+### ATTRIBUTE
+
+| name            | type     | multiplicity |
+|-----------------+----------+--------------|
+| clientId        | string   | ?            |
+| path            | string   | ?            |
+| existingImageId | entityid | ?            |
+| existingBlobId  | entityid | ?            |
+| contentType     | string   | ?            |
+| altText         | string   | ?            |
+| titleText       | string   | ?            |
+| sortOrder       | int      | ?            |
+| checksum        | string   | ?            |
+
+## RegisterBlogPostResult
+
+### EXTENDS
+
+OperationResult
 
 ## CreateBlogPostResult
 

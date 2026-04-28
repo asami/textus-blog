@@ -96,5 +96,11 @@ lazy val root = project
           "}\n"
       IO.write(out, content)
       Seq(out)
+    }.taskValue,
+
+    Compile / resourceGenerators += Def.task {
+      val out = (Compile / resourceManaged).value / "META-INF" / "services" / "org.goldenport.cncf.component.Component$BundleFactory"
+      IO.write(out, "org.simplemodeling.textus.blog.ComponentFactory\n")
+      Seq(out)
     }.taskValue
   )
