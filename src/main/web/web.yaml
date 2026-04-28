@@ -1,0 +1,45 @@
+expose:
+  blog-component.blog.create-post: protected
+  blog-component.blog.get-post: public
+  blog-component.blog.search-posts: public
+  blog-component.blog.register-image: protected
+  blog-component.blog.bind-image-to-entity: protected
+  blog-component.blog.search-entity-images: public
+  blog-component.blog.publish-post: protected
+  blog-component.blog.deactivate-post: protected
+  blog-component.blog.sync-inline-images: protected
+  blog-component.blog.search-inline-images: public
+form:
+  blog-component.blog.create-post:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
+    stayOnError: true
+    controls:
+      body:
+        type: textarea
+        required: true
+  blog-component.blog.search-posts:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/blog-post
+    stayOnError: true
+  blog-component.blog.register-image:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/image-asset/${result.id}
+    stayOnError: true
+  blog-component.blog.bind-image-to-entity:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/entity-image-binding/${result.id}
+    stayOnError: true
+  blog-component.blog.search-inline-images:
+    enabled: true
+    successRedirect: /web/${component}/admin/entities/blog-inline-image
+    stayOnError: true
+admin:
+  entity.blog-post:
+    totalCount: optional
+  entity.image-asset:
+    totalCount: optional
+  entity.entity-image-binding:
+    totalCount: optional
+  entity.blog-inline-image:
+    totalCount: optional

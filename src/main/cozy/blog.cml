@@ -1,0 +1,567 @@
+# COMPONENT
+
+## BlogComponent
+
+### PACKAGE
+
+org.simplemodeling.textus.blog
+
+### DESCRIPTION
+
+Blog CAR component used as a Cozy development driver.
+
+This model keeps the image binding pattern explicit:
+- `ImageAsset` stores image metadata as an Entity.
+- `BlogPost.primaryImageId` points at the primary image.
+- `EntityImageBinding` links any Entity instance to one or more images by role.
+- `BlogPost.authorAccountId` ties blog authoring to a user account.
+- `BlogPost` supports draft, published, and inactive states.
+- Public blog read/search exposes published active posts.
+- `BlogInlineImage` tracks images discovered from `img` tags in article body.
+
+# SERVICE
+
+## Blog
+
+### DESCRIPTION
+
+Operations for authoring public blog posts and associating images with
+entities.
+
+### OPERATION
+
+#### createPost
+
+##### TYPE
+
+COMMAND
+
+##### IMPLEMENTATION
+
+entity-create
+
+##### ENTITY
+
+BlogPost
+
+##### INPUT
+
+###### TYPE
+
+CreateBlogPost
+
+##### OUTPUT
+
+###### TYPE
+
+CreateBlogPostResult
+
+#### getPost
+
+##### TYPE
+
+QUERY
+
+##### IMPLEMENTATION
+
+entity-load
+
+##### ENTITY
+
+BlogPost
+
+##### INPUT
+
+###### TYPE
+
+GetBlogPost
+
+##### OUTPUT
+
+###### TYPE
+
+BlogPostResult
+
+#### searchPosts
+
+##### TYPE
+
+QUERY
+
+##### IMPLEMENTATION
+
+entity-search
+
+##### ENTITY
+
+BlogPost
+
+##### INPUT
+
+###### TYPE
+
+SearchBlogPosts
+
+##### OUTPUT
+
+###### TYPE
+
+SearchBlogPostsResult
+
+#### registerImage
+
+##### TYPE
+
+COMMAND
+
+##### IMPLEMENTATION
+
+entity-create
+
+##### ENTITY
+
+ImageAsset
+
+##### INPUT
+
+###### TYPE
+
+RegisterImage
+
+##### OUTPUT
+
+###### TYPE
+
+RegisterImageResult
+
+#### bindImageToEntity
+
+##### TYPE
+
+COMMAND
+
+##### IMPLEMENTATION
+
+entity-create
+
+##### ENTITY
+
+EntityImageBinding
+
+##### INPUT
+
+###### TYPE
+
+BindImageToEntity
+
+##### OUTPUT
+
+###### TYPE
+
+BindImageToEntityResult
+
+#### searchEntityImages
+
+##### TYPE
+
+QUERY
+
+##### IMPLEMENTATION
+
+entity-search
+
+##### ENTITY
+
+EntityImageBinding
+
+##### INPUT
+
+###### TYPE
+
+SearchEntityImages
+
+##### OUTPUT
+
+###### TYPE
+
+SearchEntityImagesResult
+
+#### publishPost
+
+##### TYPE
+
+COMMAND
+
+##### ENTITY
+
+BlogPost
+
+##### INPUT
+
+###### TYPE
+
+PublishBlogPost
+
+##### OUTPUT
+
+###### TYPE
+
+PublishBlogPostResult
+
+#### deactivatePost
+
+##### TYPE
+
+COMMAND
+
+##### ENTITY
+
+BlogPost
+
+##### INPUT
+
+###### TYPE
+
+DeactivateBlogPost
+
+##### OUTPUT
+
+###### TYPE
+
+DeactivateBlogPostResult
+
+#### syncInlineImages
+
+##### TYPE
+
+COMMAND
+
+##### ENTITY
+
+BlogInlineImage
+
+##### INPUT
+
+###### TYPE
+
+SyncInlineImages
+
+##### OUTPUT
+
+###### TYPE
+
+SyncInlineImagesResult
+
+#### searchInlineImages
+
+##### TYPE
+
+QUERY
+
+##### IMPLEMENTATION
+
+entity-search
+
+##### ENTITY
+
+BlogInlineImage
+
+##### INPUT
+
+###### TYPE
+
+SearchBlogInlineImages
+
+##### OUTPUT
+
+###### TYPE
+
+SearchBlogInlineImagesResult
+
+# ENTITY
+
+## BlogPost
+
+### FEATURES
+
+extends = ["SimpleEntity"]
+
+### DESCRIPTION
+
+Blog article entity. `authorAccountId` references the user account that owns
+the draft. `primaryImageId` references the image used as the main visual.
+Additional images are represented by `EntityImageBinding`, and inline `img`
+tag occurrences are tracked by `BlogInlineImage`.
+
+Public read/search should expose only posts whose draft status is published and
+whose active status is active. Draft and inactive posts remain author/admin
+surfaces.
+
+### ATTRIBUTE
+
+| name            | type     | multiplicity | web-label      | web-placeholder |
+|-----------------+----------+--------------+----------------+-----------------|
+| id              | entityid | 1            | ID             |                 |
+| slug            | string   | 1            | Slug           | release-note    |
+| title           | string   | 1            | Title          | Release note    |
+| body            | string   | 1            | Body           | Article markup  |
+| authorAccountId | entityid | 1            | Author account |                 |
+| primaryImageId  | entityid | ?            | Primary image  |                 |
+| draftStatus     | string   | 1            | Draft status   | Draft           |
+| activeStatus    | string   | 1            | Active status  | Active          |
+
+## ImageAsset
+
+### FEATURES
+
+extends = ["SimpleEntity"]
+
+### DESCRIPTION
+
+Image metadata entity. Binary storage is intentionally outside this component;
+`objectKey` can point to a BlobStore/S3 object or another repository.
+
+### ATTRIBUTE
+
+| name        | type     | multiplicity | web-label    | web-placeholder          |
+|-------------+----------+--------------+--------------+--------------------------|
+| id          | entityid | 1            | ID           |                          |
+| objectKey   | string   | 1            | Object key   | images/hero.jpg          |
+| contentType | string   | 1            | Content type | image/jpeg               |
+| altText     | string   | ?            | Alt text     | Product screenshot       |
+| width       | int      | ?            | Width        | 1200                     |
+| height      | int      | ?            | Height       | 630                      |
+| checksum    | string   | ?            | Checksum     | sha256:...               |
+
+## EntityImageBinding
+
+### FEATURES
+
+extends = ["SimpleEntity"]
+
+### DESCRIPTION
+
+Generic link from an Entity instance to an image.
+
+`entityName` plus `entityId` identifies the owner Entity. `role` distinguishes
+cover, inline, thumbnail, and other use cases.
+
+### ATTRIBUTE
+
+| name       | type     | multiplicity | web-label   | web-placeholder |
+|------------+----------+--------------+-------------+-----------------|
+| id         | entityid | 1            | ID          |                 |
+| entityName | string   | 1            | Entity      | BlogPost        |
+| entityId   | entityid | 1            | Entity ID   |                 |
+| imageId    | entityid | 1            | Image ID    |                 |
+| role       | string   | 1            | Role        | cover           |
+| sortOrder  | int      | ?            | Sort order  | 10              |
+| caption    | string   | ?            | Caption     | Figure caption  |
+
+## BlogInlineImage
+
+### FEATURES
+
+extends = ["SimpleEntity"]
+
+### DESCRIPTION
+
+Image occurrence extracted from an `img` tag in a blog article body.
+
+This entity records source markup details separately from the generic
+`EntityImageBinding` link. A synchronized inline image should have a
+corresponding `EntityImageBinding` row with `role = inline`.
+
+### ATTRIBUTE
+
+| name         | type     | multiplicity | web-label     | web-placeholder |
+|--------------+----------+--------------+---------------+-----------------|
+| id           | entityid | 1            | ID            |                 |
+| blogPostId   | entityid | 1            | Blog post     |                 |
+| imageId      | entityid | ?            | Managed image |                 |
+| sourceUrl    | string   | 1            | Source URL    | /blob/content/1 |
+| altText      | string   | ?            | Alt text      | Screenshot      |
+| titleText    | string   | ?            | Title text    |                 |
+| sortOrder    | int      | 1            | Sort order    | 10              |
+| synchronized | boolean  | 1            | Synchronized  | true            |
+
+# COMMAND
+
+## CreateBlogPost
+
+### ATTRIBUTE
+
+| name            | type     | multiplicity |
+|-----------------+----------+--------------|
+| slug            | string   | 1            |
+| title           | string   | 1            |
+| body            | string   | 1            |
+| authorAccountId | entityid | 1            |
+| primaryImageId  | entityid | ?            |
+| draftStatus     | string   | 1            |
+| activeStatus    | string   | 1            |
+
+## RegisterImage
+
+### ATTRIBUTE
+
+| name        | type   | multiplicity |
+|-------------+--------+--------------|
+| objectKey   | string | 1            |
+| contentType | string | 1            |
+| altText     | string | ?            |
+| width       | int    | ?            |
+| height      | int    | ?            |
+| checksum    | string | ?            |
+
+## BindImageToEntity
+
+### ATTRIBUTE
+
+| name       | type     | multiplicity |
+|------------+----------+--------------|
+| entityName | string   | 1            |
+| entityId   | entityid | 1            |
+| imageId    | entityid | 1            |
+| role       | string   | 1            |
+| sortOrder  | int      | ?            |
+| caption    | string   | ?            |
+
+## PublishBlogPost
+
+### ATTRIBUTE
+
+| name               | type     | multiplicity |
+|--------------------+----------+--------------|
+| id                 | entityid | 1            |
+| publisherAccountId | entityid | 1            |
+
+## DeactivateBlogPost
+
+### ATTRIBUTE
+
+| name              | type     | multiplicity |
+|-------------------+----------+--------------|
+| id                | entityid | 1            |
+| operatorAccountId | entityid | 1            |
+| reason            | string   | ?            |
+
+## SyncInlineImages
+
+### DESCRIPTION
+
+Command payload for scanning article body `img` tags and synchronizing their
+managed image bindings.
+
+### ATTRIBUTE
+
+| name           | type     | multiplicity |
+|----------------+----------+--------------|
+| blogPostId     | entityid | 1            |
+| actorAccountId | entityid | 1            |
+
+# QUERY
+
+## GetBlogPost
+
+### ATTRIBUTE
+
+| name | type     | multiplicity |
+|------+----------+--------------|
+| id   | entityid | 1            |
+
+## SearchBlogPosts
+
+### ATTRIBUTE
+
+| name         | type   | multiplicity |
+|--------------+--------+--------------|
+| draftStatus  | string | ?            |
+| activeStatus | string | ?            |
+| text         | string | ?            |
+| offset       | int    | ?            |
+| limit        | int    | ?            |
+
+## SearchEntityImages
+
+### ATTRIBUTE
+
+| name       | type     | multiplicity |
+|------------+----------+--------------|
+| entityName | string   | 1            |
+| entityId   | entityid | 1            |
+| role       | string   | ?            |
+| offset     | int      | ?            |
+| limit      | int      | ?            |
+
+## SearchBlogInlineImages
+
+### ATTRIBUTE
+
+| name       | type     | multiplicity |
+|------------+----------+--------------|
+| blogPostId | entityid | 1            |
+| offset     | int      | ?            |
+| limit      | int      | ?            |
+
+# VALUE
+
+## CreateBlogPostResult
+
+### EXTENDS
+
+OperationResult
+
+## BlogPostResult
+
+### EXTENDS
+
+OperationResult
+
+## SearchBlogPostsResult
+
+### EXTENDS
+
+OperationResult
+
+## RegisterImageResult
+
+### EXTENDS
+
+OperationResult
+
+## BindImageToEntityResult
+
+### EXTENDS
+
+OperationResult
+
+## SearchEntityImagesResult
+
+### EXTENDS
+
+OperationResult
+
+## PublishBlogPostResult
+
+### EXTENDS
+
+OperationResult
+
+## DeactivateBlogPostResult
+
+### EXTENDS
+
+OperationResult
+
+## SyncInlineImagesResult
+
+### EXTENDS
+
+OperationResult
+
+## SearchBlogInlineImagesResult
+
+### EXTENDS
+
+OperationResult
