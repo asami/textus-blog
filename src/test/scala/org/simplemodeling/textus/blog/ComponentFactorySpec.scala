@@ -280,6 +280,103 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       component.logic.executeAction(get, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
     }
 
+    "derive representative image from first inline Association fallback" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_inline_representative", EntityCollectionId("textus", "account", "account"))
+      val inline1 = EntityId("cncf", "inline_representative_1", BlobRepository.CollectionId)
+      val inline2 = EntityId("cncf", "inline_representative_2", BlobRepository.CollectionId)
+      Vector(inline1 -> "inline-1", inline2 -> "inline-2").foreach { case (id, body) =>
+        _success(BlobPayloadSupport.putManagedPayload(
+          component = component,
+          id = id,
+          kind = BlobKind.Image,
+          filename = Some(s"${body}.png"),
+          contentType = ContentType.IMAGE_PNG,
+          payload = Bag.binary(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        ))
+      }
+      val register = RegisterPostCommand(
+        Request.of("blog", "blog", "registerPost"),
+        Record.dataAuto(
+          "slug" -> "inline-representative",
+          "title" -> "Inline Representative",
+          "content" -> "<article><p>Body</p><img src=\"/web/blob/content/inline-1\"><img src=\"/web/blob/content/inline-2\"></article>",
+          "authorAccountId" -> authorId,
+          "publish" -> true,
+          "inlineImages" -> Vector(
+            Record.dataAuto("existingBlobId" -> inline2, "sourcePath" -> "inline-2.png", "sortOrder" -> 2),
+            Record.dataAuto("existingBlobId" -> inline1, "sourcePath" -> "inline-1.png", "sortOrder" -> 1)
+          )
+        )
+      )
+      val registered = _record(_success(component.logic.executeAction(register, summon[ExecutionContext])))
+      val postId = registered.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      val get = GetPostQuery(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
+
+      val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
+
+      published.getAsC[EntityId]("representativeBlobId").toOption.flatten shouldBe Some(inline1)
+      published.getString("representativeBlobUrl") shouldBe Some(s"/web/blob/content/${inline1.value}")
+    }
+
+    "derive representative image URL from Blob metadata accessUrl" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_external_representative", EntityCollectionId("textus", "account", "account"))
+      val externalBlobId = EntityId("cncf", "external_representative_cover", BlobRepository.CollectionId)
+      val externalUrl = "https://example.test/blog/external-cover.png"
+      _success(BlobRepository.entityStore().create(BlobCreate(
+        id = externalBlobId,
+        kind = BlobKind.Image,
+        sourceMode = BlobSourceMode.ExternalUrl,
+        filename = Some("external-cover.png"),
+        contentType = Some(ContentType.IMAGE_PNG),
+        byteSize = None,
+        digest = None,
+        storageRef = None,
+        externalUrl = Some(externalUrl),
+        accessUrl = BlobAccessUrl(
+          displayUrl = externalUrl,
+          downloadUrl = externalUrl,
+          urlSource = BlobAccessUrlSource.Backend
+        )
+      )))
+      val register = RegisterPostCommand(
+        Request.of("blog", "blog", "registerPost"),
+        Record.dataAuto(
+          "slug" -> "external-representative",
+          "title" -> "External Representative",
+          "content" -> "<article><p>Body</p></article>",
+          "authorAccountId" -> authorId,
+          "publish" -> true,
+          "entityImages" -> Vector(
+            Record.dataAuto("existingBlobId" -> externalBlobId, "role" -> "cover", "sortOrder" -> 1)
+          )
+        )
+      )
+      val registered = _record(_success(component.logic.executeAction(register, summon[ExecutionContext])))
+      val postId = registered.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      val get = GetPostQuery(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
+
+      val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
+
+      published.getAsC[EntityId]("representativeBlobId").toOption.flatten shouldBe Some(externalBlobId)
+      published.getString("representativeBlobUrl") shouldBe Some(externalUrl)
+    }
+
     "filter public search by text before applying pagination" in {
       val subsystem = DefaultSubsystemFactory.default(Some("command"))
       val component = (new ComponentFactory)

@@ -7,7 +7,7 @@ import cats.syntax.all.*
 import org.goldenport.*
 import org.goldenport.bag.Bag
 import org.goldenport.cncf.action.ActionCall
-import org.goldenport.cncf.association.{AssociationCreate, AssociationDomain, AssociationFilter, AssociationRepository, AssociationStoragePolicy}
+import org.goldenport.cncf.association.{AssociationCreate, AssociationDomain, AssociationRepository, AssociationStoragePolicy}
 import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.Component
 import org.goldenport.cncf.directive.{Query, SearchResult}
@@ -650,43 +650,34 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     }
 
     protected final def _public_post_record(post: BlogPost): Consequence[Record] =
-      _image_summary(post.id).map { summary =>
+      _image_projection(post.id).map { projection =>
+        val representative = projection.representativeImage
         post.toRecord() ++ Record.dataAuto(
-          "representativeBlobId" -> summary.representativeBlobId,
-          "representativeBlobUrl" -> summary.representativeBlobId.map(BlobUrl.cncfRoute(_).displayUrl),
-          "imageRoles" -> summary.roles
+          "representativeBlobId" -> representative.map(_.metadata.id),
+          "representativeBlobUrl" -> representative.map(_.metadata.accessUrl.displayUrl),
+          "imageRoles" -> projection.images.map(_image_role_record)
         )
       }
 
-    private final case class ImageSummary(
-      representativeBlobId: Option[EntityId],
-      roles: Vector[Record]
-    )
-
-    private def _image_summary(postId: EntityId): Consequence[ImageSummary] = {
+    private def _image_projection(postId: EntityId): Consequence[BlobProjectionResult] = {
       given org.goldenport.cncf.context.ExecutionContext = executionContext
-      val repository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
-      repository.list(
-        AssociationFilter(
-          domain = AssociationDomain.BlobAttachment,
-          sourceEntityId = Some(postId.value),
-          targetKind = Some("blob")
+      val associations = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+      val blobs = BlobRepository.entityStore()
+      BlobProjection.entityImageProjection(postId.value)(
+        BlobProjection.Loaders(
+          listAssociations = filter => associations.list(filter),
+          loadBlob = id => blobs.get(id)
         )
-      ).map { associations =>
-        val records = associations.sortBy(_.sortOrder.getOrElse(Int.MaxValue)).map { assoc =>
-          Record.dataAuto(
-            "role" -> assoc.role,
-            "blobId" -> _blob_entity_id(assoc.targetEntityId),
-            "url" -> BlobUrl.cncfRoute(_blob_entity_id(assoc.targetEntityId)).displayUrl,
-            "sortOrder" -> assoc.sortOrder
-          )
-        }
-        val representative = Vector("primary", "cover", "thumbnail").flatMap { role =>
-          associations.filter(_.role == role).sortBy(_.sortOrder.getOrElse(Int.MaxValue)).headOption
-        }.headOption.map(x => _blob_entity_id(x.targetEntityId))
-        ImageSummary(representative, records)
-      }
+      )
     }
+
+    private def _image_role_record(row: BlobProjectionRow): Record =
+      Record.dataAuto(
+        "role" -> row.association.role,
+        "blobId" -> row.metadata.id,
+        "url" -> row.metadata.accessUrl.displayUrl,
+        "sortOrder" -> row.association.sortOrder
+      )
 
     private def _is_public(post: BlogPost): Boolean =
       post.draftStatus == "published" && post.activeStatus == "active"
@@ -702,19 +693,6 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
     private def _normalize_text(value: String): String =
       value.toLowerCase(java.util.Locale.ROOT)
-
-    private def _blob_entity_id(value: String): EntityId =
-      EntityId.parse(value) match {
-        case Consequence.Success(id) => id
-        case _ =>
-          EntityId(
-            BlobRepository.CollectionId.major,
-            value,
-            BlobRepository.CollectionId,
-            Some(UniversalId.StableTimestamp),
-            Some(UniversalId.StableEntropy)
-          )
-      }
 
     protected final def _string(record: Record, names: String*): Option[String] =
       names.iterator.flatMap(record.getAny).map(_.toString.trim).find(_.nonEmpty)
