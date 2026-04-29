@@ -9,9 +9,10 @@ import org.goldenport.bag.Bag
 import org.goldenport.cncf.action.ActionCall
 import org.goldenport.cncf.association.{AssociationCreate, AssociationDomain, AssociationRepository, AssociationStoragePolicy}
 import org.goldenport.cncf.blob.*
-import org.goldenport.cncf.component.Component
+import org.goldenport.cncf.component.{Component, ComponentCreate}
 import org.goldenport.cncf.directive.{Query, SearchResult}
 import org.goldenport.cncf.entity.{EntityPersistent, EntityQuery, EntitySearchScope}
+import org.goldenport.cncf.operation.CmlOperationImageBinding
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
 import org.goldenport.datatype.ContentType
 import org.goldenport.id.UniversalId
@@ -41,8 +42,33 @@ final class ComponentFactory
 }
 
 class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
+  override protected def create_Component(params: ComponentCreate): Component =
+    BlogRuntimeComponent()
+
   override val Blog: BlogComponentComponent.BlogServiceFactory =
     BlogServiceFactoryImpl()
+
+  private final class BlogRuntimeComponent extends BlogComponentComponent {
+    override def operationDefinitions: Vector[org.goldenport.cncf.operation.CmlOperationDefinition] =
+      super.operationDefinitions.map {
+        case definition if definition.name == "importPostTree" =>
+          definition.copy(imageBinding = Some(CmlOperationImageBinding(
+            acceptsArchiveBlobId = true,
+            createsAttachment = true,
+            roles = BlogComponentRuntimeFactory.ImageRoles,
+            parameters = Vector("archiveBlobId", "entityImages", "inlineImages")
+          )))
+        case definition if definition.name == "registerPost" =>
+          definition.copy(imageBinding = Some(CmlOperationImageBinding(
+            acceptsExistingBlobId = true,
+            createsAttachment = true,
+            roles = BlogComponentRuntimeFactory.ImageRoles,
+            parameters = Vector("entityImages.existingBlobId", "inlineImages.existingBlobId")
+          )))
+        case definition =>
+          definition
+      }
+  }
 
   final class BlogServiceFactoryImpl extends BlogComponentComponent.BlogServiceFactory {
     import BlogComponentComponent.BlogService.*
@@ -713,4 +739,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private trait BlogLifecycleActionSupport extends BlogReadActionSupport { self: ActionCall =>
   }
+}
+
+object BlogComponentRuntimeFactory {
+  val ImageRoles: Vector[String] =
+    Vector("primary", "cover", "thumbnail", "gallery", "inline")
 }

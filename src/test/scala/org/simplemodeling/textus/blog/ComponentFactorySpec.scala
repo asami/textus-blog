@@ -40,6 +40,26 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       factory.Blog.createRegisterPostActionCall(registerCore, registerAction).getClass.getName should include ("RegisterPostActionCallImpl")
     }
 
+    "publish image binding metadata for blog import and registration operations" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val definitions = component.operationDefinitions.map(x => x.name -> x).toMap
+      val importBinding = definitions("importPostTree").imageBinding.getOrElse(fail("importPostTree imageBinding is missing"))
+      val registerBinding = definitions("registerPost").imageBinding.getOrElse(fail("registerPost imageBinding is missing"))
+
+      importBinding.acceptsArchiveBlobId shouldBe true
+      importBinding.createsAttachment shouldBe true
+      importBinding.roles should contain allOf ("primary", "cover", "thumbnail", "gallery", "inline")
+      importBinding.parameters should contain ("archiveBlobId")
+      registerBinding.acceptsExistingBlobId shouldBe true
+      registerBinding.createsAttachment shouldBe true
+      registerBinding.roles should contain allOf ("primary", "cover", "thumbnail", "gallery", "inline")
+      registerBinding.parameters should contain ("entityImages.existingBlobId")
+      registerBinding.parameters should contain ("inlineImages.existingBlobId")
+    }
+
     "publish the BundleFactory service entry for runtime discovery" in {
       val resourceName = "META-INF/services/org.goldenport.cncf.component.Component$BundleFactory"
       val stream = Option(getClass.getClassLoader.getResourceAsStream(resourceName))
