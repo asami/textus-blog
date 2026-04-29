@@ -11,9 +11,9 @@ org.simplemodeling.textus.blog
 Blog CAR component used as a Cozy development driver.
 
 This model keeps the image binding pattern explicit:
-- `ImageAsset` stores image metadata as an Entity.
-- `BlogPost.primaryImageId` points at the primary image.
-- `EntityImageBinding` links any Entity instance to one or more images by role.
+- CNCF Blob metadata stores image metadata.
+- CNCF BlobAttachment Association links BlogPost to one or more image Blobs by
+  role.
 - `BlogPost.authorAccountId` ties blog authoring to a user account.
 - `BlogPost` supports draft, published, and inactive states.
 - Public blog read/search exposes published active posts.
@@ -147,84 +147,6 @@ SearchBlogPosts
 
 SearchBlogPostsResult
 
-#### registerImage
-
-##### TYPE
-
-COMMAND
-
-##### IMPLEMENTATION
-
-entity-create
-
-##### ENTITY
-
-ImageAsset
-
-##### INPUT
-
-###### TYPE
-
-RegisterImage
-
-##### OUTPUT
-
-###### TYPE
-
-RegisterImageResult
-
-#### bindImageToEntity
-
-##### TYPE
-
-COMMAND
-
-##### IMPLEMENTATION
-
-entity-create
-
-##### ENTITY
-
-EntityImageBinding
-
-##### INPUT
-
-###### TYPE
-
-BindImageToEntity
-
-##### OUTPUT
-
-###### TYPE
-
-BindImageToEntityResult
-
-#### searchEntityImages
-
-##### TYPE
-
-QUERY
-
-##### IMPLEMENTATION
-
-entity-search
-
-##### ENTITY
-
-EntityImageBinding
-
-##### INPUT
-
-###### TYPE
-
-SearchEntityImages
-
-##### OUTPUT
-
-###### TYPE
-
-SearchEntityImagesResult
-
 #### publishPost
 
 ##### TYPE
@@ -329,9 +251,9 @@ extends = ["SimpleEntity"]
 
 Blog article entity. `authorAccountId` references the user account that owns
 the draft. `content` stores the canonical HTML article fragment extracted from
-full HTML input or accepted directly by `registerPost`. `primaryImageId`
-references the image used as the main visual. Additional images are represented
-by `EntityImageBinding`, and inline `img` tag occurrences are tracked by
+full HTML input or accepted directly by `registerPost`. Images are represented
+by CNCF BlobAttachment Association rows whose role identifies primary, cover,
+thumbnail, gallery, or inline use. Inline `img` tag occurrences are tracked by
 `BlogInlineImage`.
 
 Public read/search should expose only posts whose draft status is published and
@@ -347,57 +269,8 @@ surfaces.
 | title           | string   | 1            | Title          | Release note    |
 | content         | string   | 1            | Content        | HTML fragment   |
 | authorAccountId | entityid | 1            | Author account |                 |
-| primaryImageId  | entityid | ?            | Primary image  |                 |
 | draftStatus     | string   | 1            | Draft status   | Draft           |
 | activeStatus    | string   | 1            | Active status  | Active          |
-
-## ImageAsset
-
-### FEATURES
-
-extends = ["SimpleEntity"]
-
-### DESCRIPTION
-
-Image metadata entity. Binary storage is intentionally outside this component;
-`objectKey` can point to a BlobStore/S3 object or another repository.
-
-### ATTRIBUTE
-
-| name        | type     | multiplicity | web-label    | web-placeholder          |
-|-------------+----------+--------------+--------------+--------------------------|
-| id          | entityid | 1            | ID           |                          |
-| objectKey   | string   | 1            | Object key   | images/hero.jpg          |
-| contentType | string   | 1            | Content type | image/jpeg               |
-| altText     | string   | ?            | Alt text     | Product screenshot       |
-| width       | int      | ?            | Width        | 1200                     |
-| height      | int      | ?            | Height       | 630                      |
-| checksum    | string   | ?            | Checksum     | sha256:...               |
-
-## EntityImageBinding
-
-### FEATURES
-
-extends = ["SimpleEntity"]
-
-### DESCRIPTION
-
-Generic link from an Entity instance to an image.
-
-`entityName` plus `entityId` identifies the owner Entity. `role` distinguishes
-cover, inline, thumbnail, and other use cases.
-
-### ATTRIBUTE
-
-| name       | type     | multiplicity | web-label   | web-placeholder |
-|------------+----------+--------------+-------------+-----------------|
-| id         | entityid | 1            | ID          |                 |
-| entityName | string   | 1            | Entity      | BlogPost        |
-| entityId   | entityid | 1            | Entity ID   |                 |
-| imageId    | entityid | 1            | Image ID    |                 |
-| role       | string   | 1            | Role        | cover           |
-| sortOrder  | int      | ?            | Sort order  | 10              |
-| caption    | string   | ?            | Caption     | Figure caption  |
 
 ## BlogInlineImage
 
@@ -411,8 +284,8 @@ Image occurrence extracted from an `img` tag in a blog article content
 fragment.
 
 This entity records source markup details separately from the generic
-`EntityImageBinding` link. A synchronized inline image should have a
-corresponding `EntityImageBinding` row with `role = inline`.
+BlobAttachment Association link. A synchronized inline image should have a
+corresponding Association row with `role = inline`.
 
 ### ATTRIBUTE
 
@@ -420,7 +293,7 @@ corresponding `EntityImageBinding` row with `role = inline`.
 |--------------+----------+--------------+---------------+-----------------|
 | id           | entityid | 1            | ID            |                 |
 | blogPostId   | entityid | 1            | Blog post     |                 |
-| imageId      | entityid | ?            | Managed image |                 |
+| blobId       | entityid | ?            | Managed Blob  |                 |
 | sourceUrl    | string   | 1            | Source URL    | /blob/content/1 |
 | altText      | string   | ?            | Alt text      | Screenshot      |
 | titleText    | string   | ?            | Title text    |                 |
@@ -485,35 +358,8 @@ Lower-level bulk registration command. `content` is a normalized HTML fragment.
 | title           | string   | 1            |
 | content         | string   | 1            |
 | authorAccountId | entityid | 1            |
-| primaryImageId  | entityid | ?            |
 | draftStatus     | string   | 1            |
 | activeStatus    | string   | 1            |
-
-## RegisterImage
-
-### ATTRIBUTE
-
-| name        | type   | multiplicity |
-|-------------+--------+--------------|
-| objectKey   | string | 1            |
-| contentType | string | 1            |
-| altText     | string | ?            |
-| width       | int    | ?            |
-| height      | int    | ?            |
-| checksum    | string | ?            |
-
-## BindImageToEntity
-
-### ATTRIBUTE
-
-| name       | type     | multiplicity |
-|------------+----------+--------------|
-| entityName | string   | 1            |
-| entityId   | entityid | 1            |
-| imageId    | entityid | 1            |
-| role       | string   | 1            |
-| sortOrder  | int      | ?            |
-| caption    | string   | ?            |
 
 ## PublishBlogPost
 
@@ -570,18 +416,6 @@ managed image bindings.
 | offset       | int    | ?            |
 | limit        | int    | ?            |
 
-## SearchEntityImages
-
-### ATTRIBUTE
-
-| name       | type     | multiplicity |
-|------------+----------+--------------|
-| entityName | string   | 1            |
-| entityId   | entityid | 1            |
-| role       | string   | ?            |
-| offset     | int      | ?            |
-| limit      | int      | ?            |
-
 ## SearchBlogInlineImages
 
 ### ATTRIBUTE
@@ -606,7 +440,6 @@ primary, cover, and gallery.
 | name            | type     | multiplicity |
 |-----------------+----------+--------------|
 | path            | string   | ?            |
-| existingImageId | entityid | ?            |
 | existingBlobId  | entityid | ?            |
 | role            | string   | 1            |
 | sortOrder       | int      | ?            |
@@ -628,7 +461,6 @@ use `clientId` for `cid:` references.
 |-----------------+----------+--------------|
 | clientId        | string   | ?            |
 | path            | string   | ?            |
-| existingImageId | entityid | ?            |
 | existingBlobId  | entityid | ?            |
 | contentType     | string   | ?            |
 | altText         | string   | ?            |
@@ -655,24 +487,6 @@ OperationResult
 OperationResult
 
 ## SearchBlogPostsResult
-
-### EXTENDS
-
-OperationResult
-
-## RegisterImageResult
-
-### EXTENDS
-
-OperationResult
-
-## BindImageToEntityResult
-
-### EXTENDS
-
-OperationResult
-
-## SearchEntityImagesResult
 
 ### EXTENDS
 
