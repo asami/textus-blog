@@ -12,6 +12,7 @@ import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{ComponentCreate, ComponentOrigin}
 import org.goldenport.cncf.context.{ExecutionContext, SecurityContext}
 import org.goldenport.cncf.entity.EntityStore
+import org.goldenport.cncf.operation.CmlOperationAssociationBinding
 import org.goldenport.cncf.subsystem.DefaultSubsystemFactory
 import org.goldenport.datatype.ContentType
 import org.goldenport.protocol.Request
@@ -58,6 +59,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       registerBinding.roles should contain allOf ("primary", "cover", "thumbnail", "gallery", "inline")
       registerBinding.parameters should contain ("entityImages.existingBlobId")
       registerBinding.parameters should contain ("inlineImages.existingBlobId")
+      registerBinding.sourceEntityIdMode shouldBe CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult
+      registerBinding.toAssociationBinding.domain shouldBe "blob_attachment"
+      registerBinding.toAssociationBinding.targetKind shouldBe "blob"
     }
 
     "publish the BundleFactory service entry for runtime discovery" in {
@@ -169,7 +173,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val response = _record(_success(component.logic.executeAction(action, summon[ExecutionContext])))
 
       response.getAny("primaryImageId") shouldBe None
+      response.getString("entity_id") should not be empty
       val postId = response.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      response.getString("entity_id") shouldBe Some(postId.value)
       val associations = _associations(postId)
       associations.map(x => x.role -> x.targetEntityId) should contain ("primary" -> blobId.value)
     }

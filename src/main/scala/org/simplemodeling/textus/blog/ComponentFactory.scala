@@ -12,7 +12,7 @@ import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{Component, ComponentCreate}
 import org.goldenport.cncf.directive.{Query, SearchResult}
 import org.goldenport.cncf.entity.{EntityPersistent, EntityQuery, EntitySearchScope}
-import org.goldenport.cncf.operation.CmlOperationImageBinding
+import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
 import org.goldenport.datatype.ContentType
 import org.goldenport.id.UniversalId
@@ -56,14 +56,17 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             acceptsArchiveBlobId = true,
             createsAttachment = true,
             roles = BlogComponentRuntimeFactory.ImageRoles,
-            parameters = Vector("archiveBlobId", "entityImages", "inlineImages")
+            parameters = Vector("archiveBlobId", "entityImages", "inlineImages"),
+            sourceEntityIdMode = CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult
           )))
         case definition if definition.name == "registerPost" =>
           definition.copy(imageBinding = Some(CmlOperationImageBinding(
             acceptsExistingBlobId = true,
             createsAttachment = true,
             roles = BlogComponentRuntimeFactory.ImageRoles,
-            parameters = Vector("entityImages.existingBlobId", "inlineImages.existingBlobId")
+            parameters = Vector("entityImages.existingBlobId", "inlineImages.existingBlobId"),
+            sourceEntityIdMode = CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult,
+            targetIdParameters = Vector("entityImages.existingBlobId", "inlineImages.existingBlobId")
           )))
         case definition =>
           definition
@@ -226,6 +229,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     } yield {
       OperationResponse(
         created.toRecord ++ Record.dataAuto(
+          "entity_id" -> created.id.value,
           "entityImageCount" -> entityImages.size,
           "inlineImageCount" -> inlineImages.size
         )
