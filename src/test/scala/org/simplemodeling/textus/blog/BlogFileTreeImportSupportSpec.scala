@@ -1,6 +1,8 @@
 package org.simplemodeling.textus.blog
 
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
+import java.util.zip.{ZipEntry, ZipOutputStream}
 import org.scalatest.GivenWhenThen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -141,6 +143,60 @@ final class BlogFileTreeImportSupportSpec extends AnyWordSpec with Matchers with
       draft.inlineImages.map(_.sourcePath) shouldBe Vector("images/inline.png")
     }
 
+    "extract a ZIP article tree and preserve HTML-relative image resolution" in {
+      Given("a ZIP with nested entry HTML and relative article images")
+      val zip = _zip(Vector(
+        "META-INF/blog.yaml" ->
+          """slug: zipped-post
+            |entryHtmlPath: posts/index.html
+            |title: ZIP title
+            |entityImages:
+            |  - path: assets/hero.jpg
+            |    role: thumbnail
+            |""".stripMargin,
+        "posts/index.html" ->
+          """<html><head><title>HTML title</title></head>
+            |<body><article><p>ZIP body</p><img src="images/inline.png"></article></body></html>""".stripMargin,
+        "posts/images/inline.png" -> "inline",
+        "assets/hero.jpg" -> "hero"
+      ))
+
+      When("extracting and normalizing the ZIP tree")
+      val root = _success(BlogFileTreeImportSupport.extractZipTree(zip))
+      val draft =
+        try _success(BlogFileTreeImportSupport.normalizeTree(root))
+        finally BlogFileTreeImportSupport.cleanupTree(root)
+
+      Then("the draft uses META-INF metadata and resolves inline paths relative to the HTML file")
+      draft.slug shouldBe Some("zipped-post")
+      draft.title shouldBe "ZIP title"
+      draft.content should include ("""src="/web/blob/content/posts-images-inline.png"""")
+      draft.inlineImages.map(_.treePath) shouldBe Vector(Some("posts/images/inline.png"))
+      draft.entityImages.map(_.path) shouldBe Vector("assets/hero.jpg")
+    }
+
+    "reject ZIP entries that escape the import tree" in {
+      Given("a ZIP with a parent-directory entry")
+      val zip = _zip(Vector("../evil.png" -> "evil"))
+
+      When("extracting the ZIP")
+      val result = BlogFileTreeImportSupport.extractZipTree(zip)
+
+      Then("validation fails deterministically")
+      result shouldBe a[Consequence.Failure[_]]
+    }
+
+    "reject non-ZIP payloads before treating them as an empty import tree" in {
+      Given("bytes that are not a ZIP archive")
+      val bytes = "not a zip".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+
+      When("extracting the ZIP")
+      val result = BlogFileTreeImportSupport.extractZipTree(bytes)
+
+      Then("validation fails deterministically")
+      result shouldBe a[Consequence.Failure[_]]
+    }
+
     "fail when an entity image metadata entry is incomplete" in {
       Given("a metadata YAML with an entity image missing path")
       val yaml =
@@ -177,5 +233,20 @@ final class BlogFileTreeImportSupportSpec extends AnyWordSpec with Matchers with
   private def _success[A](p: Consequence[A]): A = p match {
     case Consequence.Success(value) => value
     case m: Consequence.Failure[_] => fail(m.toString)
+  }
+
+  private def _zip(entries: Vector[(String, String)]): Array[Byte] = {
+    val out = new ByteArrayOutputStream()
+    val zip = new ZipOutputStream(out)
+    try {
+      entries.foreach { case (name, body) =>
+        zip.putNextEntry(new ZipEntry(name))
+        zip.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        zip.closeEntry()
+      }
+    } finally {
+      zip.close()
+    }
+    out.toByteArray
   }
 }

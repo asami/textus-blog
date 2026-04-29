@@ -1,7 +1,9 @@
 package org.simplemodeling.textus.blog
 
+import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Path}
+import java.nio.file.{Files, Path, StandardCopyOption}
+import java.util.zip.ZipInputStream
 import scala.jdk.CollectionConverters._
 import org.goldenport.Consequence
 import org.goldenport.cncf.html.HtmlTree
@@ -32,7 +34,8 @@ final case class BlogInlineImageDraft(
   index: Int,
   sourcePath: String,
   altText: Option[String],
-  titleText: Option[String]
+  titleText: Option[String],
+  treePath: Option[String] = None
 )
 
 final case class BlogRegistrationDraft(
@@ -47,7 +50,7 @@ final case class BlogRegistrationDraft(
 
 object BlogFileTreeImportSupport {
   def normalizeTree(root: Path): Consequence[BlogRegistrationDraft] =
-    normalizeTreeWithInlineImageUrls(root)(img => Some(s"/web/blob/content/${_public_url_key(img.sourcePath)}"))
+    normalizeTreeWithInlineImageUrls(root)(img => Some(s"/web/blob/content/${_public_url_key(img.treePath.getOrElse(img.sourcePath))}"))
 
   def normalizeTreeWithInlineImageUrls(
     root: Path
@@ -56,10 +59,57 @@ object BlogFileTreeImportSupport {
       metadata <- loadMetadata(root)
       entry <- _entry_html(root, metadata)
       html <- _read_string(entry)
-      draft <- normalizeWithInlineImageUrls(html, metadata)(resolve)
+      draft <- _normalize_tree_html_with_inline_image_urls(root, entry, html, metadata)(resolve)
       _ <- _validate_entity_images(root, draft.entityImages)
-      _ <- _validate_inline_images(root, entry, draft.inlineImages)
     } yield draft
+
+  def extractZipTree(bytes: Array[Byte]): Consequence[Path] =
+    try {
+      val root = Files.createTempDirectory("textus-blog-import-")
+      _extract_zip(bytes, root) match {
+        case Consequence.Success(_) =>
+          if (_has_extracted_entry(root))
+            Consequence.success(root)
+          else {
+            cleanupTree(root)
+            Consequence.operationInvalid("Blog ZIP import tree is empty or not a ZIP archive")
+          }
+        case f: Consequence.Failure[?] =>
+          cleanupTree(root)
+          Consequence.Failure(f.conclusion)
+      }
+    } catch {
+      case e: Exception =>
+      Consequence.operationInvalid(s"failed to prepare Blog ZIP import tree: ${e.getMessage}")
+    }
+
+  private def _has_extracted_entry(root: Path): Boolean = {
+    val stream = Files.list(root)
+    try {
+      stream.iterator().hasNext
+    } finally {
+      stream.close()
+    }
+  }
+
+  def cleanupTree(root: Path): Consequence[Unit] = {
+    try {
+      if (Files.exists(root)) {
+        val stream = Files.walk(root)
+        try {
+          stream.iterator().asScala.toVector
+            .sortBy(_.getNameCount)
+            .reverse
+            .foreach(Files.deleteIfExists)
+        } finally {
+          stream.close()
+        }
+      }
+      Consequence.unit
+    } catch {
+      case _: Exception => Consequence.unit
+    }
+  }
 
   def loadMetadata(root: Path): Consequence[BlogTreeMetadata] = {
     val path = root.resolve("META-INF").resolve("blog.yaml")
@@ -147,6 +197,37 @@ object BlogFileTreeImportSupport {
       }
     }
 
+  private def _normalize_tree_html_with_inline_image_urls(
+    root: Path,
+    entry: Path,
+    entryHtml: String,
+    metadata: BlogTreeMetadata
+  )(resolve: BlogInlineImageDraft => Option[String]): Consequence[BlogRegistrationDraft] =
+    HtmlTree.parse(entryHtml).flatMap { document =>
+      document.articleFragment.flatMap { fragment =>
+        val title = metadata.title.orElse(document.title).map(_.trim).filter(_.nonEmpty)
+        title
+          .map { resolvedTitle =>
+            for {
+              inlineImages <- _resolve_inline_images(root, entry, _inline_images(fragment))
+              byIndex = inlineImages.map(x => x.index -> x).toMap
+              rewritten = fragment.rewriteImageSources { img =>
+                byIndex.get(img.index).flatMap(resolve)
+              }
+            } yield BlogRegistrationDraft(
+              slug = metadata.slug,
+              title = resolvedTitle,
+              content = rewritten.render,
+              description = metadata.description.orElse(document.description),
+              canonicalPath = metadata.canonicalPath.orElse(document.canonical),
+              entityImages = metadata.entityImages,
+              inlineImages = inlineImages
+            )
+          }
+          .getOrElse(Consequence.operationInvalid("Blog file tree metadata does not define a title and HTML head title is missing"))
+      }
+    }
+
   private def _read_string(path: Path): Consequence[String] =
     try {
       Consequence.success(Files.readString(path, StandardCharsets.UTF_8))
@@ -215,11 +296,36 @@ object BlogFileTreeImportSupport {
       .getOrElse(Consequence.success(()))
   }
 
+  private def _resolve_inline_images(
+    root: Path,
+    entry: Path,
+    images: Vector[BlogInlineImageDraft]
+  ): Consequence[Vector[BlogInlineImageDraft]] = {
+    val base = Option(entry.getParent).getOrElse(root)
+    images.foldLeft(Consequence.success(Vector.empty[BlogInlineImageDraft])) {
+      case (z, image) =>
+        z.flatMap { xs =>
+          if (_is_local_relative_src(image.sourcePath)) {
+            val resolved = _resolve_tree_path(base, image.sourcePath)
+            if (!_within(root, resolved) || !Files.isRegularFile(resolved))
+              Consequence.operationInvalid(s"Blog inline image is missing: ${image.sourcePath}")
+            else
+              Consequence.success(xs :+ image.copy(treePath = Some(_tree_relative_path(root, resolved))))
+          } else {
+            Consequence.success(xs :+ image)
+          }
+        }
+    }
+  }
+
   private def _resolve_tree_path(root: Path, path: String): Path =
     root.resolve(path).normalize()
 
   private def _within(root: Path, path: Path): Boolean =
     path.normalize().startsWith(root.normalize())
+
+  private def _tree_relative_path(root: Path, path: Path): String =
+    root.normalize().relativize(path.normalize()).iterator().asScala.map(_.toString).mkString("/")
 
   private def _is_local_relative_src(path: String): Boolean = {
     val lower = path.toLowerCase
@@ -241,6 +347,57 @@ object BlogFileTreeImportSupport {
       case "" => "inline-image"
       case s => s
     }
+
+  private def _extract_zip(bytes: Array[Byte], root: Path): Consequence[Unit] =
+    try {
+      val zis = new ZipInputStream(new ByteArrayInputStream(bytes))
+      try {
+        Iterator.continually(zis.getNextEntry).takeWhile(_ != null).foldLeft(Consequence.unit) {
+          case (z, entry) =>
+            z.flatMap { _ =>
+              val name = Option(entry.getName).map(_.trim).getOrElse("")
+              _validate_zip_entry_name(name).flatMap { _ =>
+                val target = root.resolve(name).normalize()
+                if (!_within(root, target))
+                  Consequence.operationInvalid(s"Blog ZIP entry escapes import root: ${name}")
+                else if (entry.isDirectory) {
+                  if (Files.exists(target) && !Files.isDirectory(target))
+                    Consequence.operationInvalid(s"Blog ZIP directory collides with a file: ${name}")
+                  else {
+                    Files.createDirectories(target)
+                    Consequence.unit
+                  }
+                } else {
+                  if (Files.exists(target))
+                    Consequence.operationInvalid(s"Blog ZIP contains duplicate entry: ${name}")
+                  else {
+                    Option(target.getParent).foreach(path => Files.createDirectories(path))
+                    Files.copy(zis, target, StandardCopyOption.REPLACE_EXISTING)
+                    Consequence.unit
+                  }
+                }
+              }
+            }
+        }
+      } finally {
+        zis.close()
+      }
+    } catch {
+      case e: Exception =>
+        Consequence.operationInvalid(s"failed to extract Blog ZIP import tree: ${e.getMessage}")
+    }
+
+  private def _validate_zip_entry_name(name: String): Consequence[Unit] =
+    if (name.isEmpty)
+      Consequence.operationInvalid("Blog ZIP contains an empty entry name")
+    else if (name.startsWith("/") || name.matches("^[A-Za-z]:.*"))
+      Consequence.operationInvalid(s"Blog ZIP entry must be relative: ${name}")
+    else if (name.contains("\\"))
+      Consequence.operationInvalid(s"Blog ZIP entry must use forward slashes: ${name}")
+    else if (name.split("/").exists(x => x == ".." || x == "."))
+      Consequence.operationInvalid(s"Blog ZIP entry contains an unsafe path segment: ${name}")
+    else
+      Consequence.unit
 
   private def _entity_images(p: Option[Any]): Consequence[Vector[BlogTreeEntityImage]] =
     p match {

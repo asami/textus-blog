@@ -2,7 +2,8 @@ package org.simplemodeling.textus.blog
 
 import java.nio.file.{Files, Path, Paths}
 import cats.syntax.all.*
-import org.goldenport.Consequence
+import org.goldenport.*
+import org.goldenport.bag.Bag
 import org.goldenport.cncf.action.ActionCall
 import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.Component
@@ -67,12 +68,16 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ) extends ImportPostTreeActionCall with BlogRegistrationActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
-        root <- exec_from(_tree_root(action.record))
-        draft <- exec_from(BlogFileTreeImportSupport.normalizeTreeWithInlineImageUrls(root) { img =>
-          Some(BlobUrl.cncfRoute(_blob_id(img.sourcePath)).displayUrl)
-        })
-        register = _register_record(action.record, draft)
-        response <- _register(register, Some(root))
+        source <- _import_tree_source(action.record)
+        response <- {
+          for {
+            draft <- exec_from(BlogFileTreeImportSupport.normalizeTreeWithInlineImageUrls(source.root) { img =>
+              Some(BlobUrl.cncfRoute(_blob_id(img.treePath.getOrElse(img.sourcePath))).displayUrl)
+            })
+            register = _register_record(action.record, draft)
+            response <- _register(register, Some(source.root))
+          } yield response
+        }.guarantee(exec_from(_cleanup_import_tree_source(source)))
       } yield response
   }
 
@@ -85,16 +90,19 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   }
 
   private trait BlogRegistrationActionSupport { self: ActionCall =>
+  protected final case class BlogImportTreeSource(root: Path, temporary: Boolean)
+
   protected final def _register(
     record: Record,
     treeRoot: Option[Path]
   ): ExecUowM[OperationResponse] =
     for {
+      entityImageSpecs <- exec_from(_entity_image_specs(record))
+      inlineImageSpecs <- exec_from(_inline_image_specs(record))
+      _ <- exec_from(_validate_registration_image_specs(entityImageSpecs, inlineImageSpecs, treeRoot))
       post <- exec_from(_blog_post(record))
       created <- entity_create(post)
-      entityImageSpecs <- exec_from(_entity_image_specs(record))
       entityImages <- _create_entity_images(created.id, entityImageSpecs, treeRoot)
-      inlineImageSpecs <- exec_from(_inline_image_specs(record))
       inlineImages <- _create_inline_images(created.id, inlineImageSpecs, treeRoot)
     } yield {
       OperationResponse(
@@ -103,6 +111,26 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           "inlineImageCount" -> inlineImages.size
         )
       )
+    }
+
+  private def _validate_registration_image_specs(
+    entityImages: Vector[BlogEntityImageSpec],
+    inlineImages: Vector[BlogInlineImageSpec],
+    treeRoot: Option[Path]
+  ): Consequence[Unit] =
+    treeRoot match {
+      case Some(_) =>
+        Consequence.unit
+      case None =>
+        entityImages.zipWithIndex.collectFirst {
+          case (spec, index) if spec.existingImageId.isEmpty && spec.existingBlobId.isEmpty =>
+            Consequence.argumentInvalid(s"registerPost entityImages[$index] requires existingImageId or existingBlobId; local path payloads must be imported through importPostTree")
+        }.orElse {
+          inlineImages.zipWithIndex.collectFirst {
+            case (spec, index) if spec.existingImageId.isEmpty && spec.existingBlobId.isEmpty =>
+              Consequence.argumentInvalid(s"registerPost inlineImages[$index] requires existingImageId or existingBlobId; local path payloads must be imported through importPostTree")
+          }
+        }.getOrElse(Consequence.unit)
     }
 
   private def _create_entity_images(
@@ -143,6 +171,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ): ExecUowM[EntityId] =
     spec.existingImageId match {
       case Some(id) => exec_pure(id)
+      case None if treeRoot.isEmpty && spec.existingBlobId.isEmpty =>
+        exec_from(Consequence.argumentInvalid("registerPost entityImages require existingImageId or existingBlobId; local path payloads must be imported through importPostTree"))
       case None =>
         val objectKey = spec.existingBlobId.map(_.value).orElse(spec.path).getOrElse(spec.role)
         val imageId = _image_id(objectKey)
@@ -161,6 +191,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ): ExecUowM[Option[EntityId]] =
     spec.existingImageId match {
       case Some(id) => exec_pure(Some(id))
+      case None if treeRoot.isEmpty && spec.existingBlobId.isEmpty =>
+        exec_from(Consequence.argumentInvalid("registerPost inlineImages require existingImageId or existingBlobId; local path payloads must be imported through importPostTree"))
       case None =>
         val objectKey = spec.existingBlobId.map(_.value).orElse(spec.path).orElse(spec.clientId).getOrElse(s"inline-$index")
         val imageId = _image_id(objectKey)
@@ -183,11 +215,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         val file = root.resolve(value).normalize()
         if (file.startsWith(root.normalize()) && Files.isRegularFile(file)) {
           for {
-            blob <- exec_from(_blob_create(id, file, contentType))
-            _ <- entity_create(blob)
+            _ <- exec_from(_put_blob_payload(id, file, contentType))
           } yield ()
         } else {
-          exec_pure(())
+          exec_from(Consequence.operationInvalid(s"Blog image file is missing: ${value}"))
         }
       case _ => exec_pure(())
     }
@@ -271,28 +302,26 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       )
     )
 
-  private def _blob_create(
+  private def _put_blob_payload(
     id: EntityId,
     file: Path,
     contentType: Option[String]
-  ): Consequence[BlobCreate] =
+  ): Consequence[Unit] =
     try {
-      val bytes = Files.readAllBytes(file)
-      Consequence.success(
-        BlobCreate(
+      val ct = ContentType.parse(contentType.getOrElse(_content_type(file.getFileName.toString)))
+      val payload = Bag.binary(Files.readAllBytes(file))
+      _component.flatMap { comp =>
+        given org.goldenport.cncf.context.ExecutionContext = executionContext
+        BlobPayloadSupport.putManagedPayload(
+          component = comp,
           id = id,
           kind = BlobKind.Image,
-          sourceMode = BlobSourceMode.Managed,
           filename = Some(file.getFileName.toString),
-          contentType = Some(ContentType.parse(contentType.getOrElse(_content_type(file.getFileName.toString)))),
-          byteSize = Some(bytes.length.toLong),
-          digest = Some(BlobStoreSupport.sha256(bytes)),
-          storageRef = None,
-          externalUrl = None,
-          accessUrl = BlobUrl.cncfRoute(id),
+          contentType = ct,
+          payload = payload,
           attributes = Map("sourcePath" -> file.toString)
-        )
-      )
+        ).map(_ => ())
+      }
     } catch {
       case e: Exception =>
         Consequence.operationInvalid(s"failed to read image file for blob registration: ${file}: ${e.getMessage}")
@@ -317,7 +346,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       },
       "inlineImages" -> draft.inlineImages.map { image =>
         Record.dataAuto(
-          "path" -> image.sourcePath,
+          "path" -> image.treePath.getOrElse(image.sourcePath),
           "altText" -> image.altText,
           "titleText" -> image.titleText,
           "sortOrder" -> image.index
@@ -342,16 +371,61 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       case r: Record => Vector(r)
     }.getOrElse(Vector.empty)
 
-  protected final def _tree_root(record: Record): Consequence[Path] =
+  protected final def _import_tree_source(record: Record): ExecUowM[BlogImportTreeSource] =
     _string(record, "treeRootPath", "tree_root_path")
-      .map(x => Consequence.success(Paths.get(x).toAbsolutePath.normalize()))
-      .getOrElse(Consequence.operationInvalid("importPostTree requires treeRootPath until archiveBlobId extraction is implemented"))
-      .flatMap { path =>
+      .map { _ =>
+        exec_from(_tree_root(record).map(BlogImportTreeSource(_, temporary = false)))
+      }
+      .getOrElse {
+        for {
+          id <- exec_from(_archive_blob_id(record))
+          comp <- exec_from(_component)
+          read <- {
+            given org.goldenport.cncf.context.ExecutionContext = executionContext
+            exec_from(BlobPayloadSupport.readManagedPayload(comp, id))
+          }
+          bytes <- exec_from(BlobStoreSupport.readAllBytes(read.payload))
+          root <- exec_from(BlogFileTreeImportSupport.extractZipTree(bytes))
+        } yield BlogImportTreeSource(root, temporary = true)
+      }
+
+  protected final def _cleanup_import_tree_source(source: BlogImportTreeSource): Consequence[Unit] =
+    if (source.temporary)
+      BlogFileTreeImportSupport.cleanupTree(source.root)
+    else
+      Consequence.unit
+
+  private def _tree_root(record: Record): Consequence[Path] =
+    _string(record, "treeRootPath", "tree_root_path")
+      .map(x => Paths.get(x).toAbsolutePath.normalize())
+      .map { path =>
         if (Files.isDirectory(path))
           Consequence.success(path)
         else
           Consequence.operationInvalid(s"Blog file tree root is not a directory: ${path}")
       }
+      .getOrElse(Consequence.operationInvalid("importPostTree requires treeRootPath or archiveBlobId"))
+
+  private def _archive_blob_id(record: Record): Consequence[EntityId] =
+    _optional_entity_id(record, "archiveBlobId", "archive_blob_id")
+      .map(Consequence.success)
+      .getOrElse(Consequence.argumentMissing("archiveBlobId"))
+
+  private def _optional_entity_id(record: Record, names: String*): Option[EntityId] =
+    names.iterator.flatMap { name =>
+      record.getAsC[EntityId](name).toOption.flatten.orElse {
+        record.getAny(name).flatMap {
+          case id: EntityId => Some(id)
+          case value => EntityId.parse(value.toString.trim).toOption
+        }
+      }
+    }.nextOption()
+
+  private def _component: Consequence[Component] =
+    component match {
+      case Some(value) => Consequence.success(value)
+      case None => Consequence.serviceUnavailable("BlogComponent is not attached to a subsystem component")
+    }
 
   private def _entity_id(record: Record, names: String*): Consequence[EntityId] =
     names.iterator.flatMap(name => record.getAsC[EntityId](name).toOption.flatten).nextOption() match {
@@ -385,7 +459,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     EntityId(collection.major, _safe_id(key), collection)
 
   private def _safe_id(value: String): String =
-    BlobStoreSupport.safeSegment(value).replace(".", "-")
+    BlobStoreSupport.safeSegment(value).replace("-", "_").replace(".", "_") match {
+      case s if s.headOption.exists(_.isLetter) => s
+      case s => s"id_${s}"
+    }
 
   private def _content_type(path: String): String =
     path.toLowerCase(java.util.Locale.ROOT) match {
