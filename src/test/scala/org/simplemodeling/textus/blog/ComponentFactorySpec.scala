@@ -12,7 +12,7 @@ import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{ComponentCreate, ComponentOrigin}
 import org.goldenport.cncf.context.{ExecutionContext, SecurityContext}
 import org.goldenport.cncf.entity.EntityStore
-import org.goldenport.cncf.operation.CmlOperationAssociationBinding
+import org.goldenport.cncf.operation.{CmlEntityRelationshipDefinition, CmlOperationAssociationBinding}
 import org.goldenport.cncf.subsystem.DefaultSubsystemFactory
 import org.goldenport.datatype.ContentType
 import org.goldenport.protocol.Request
@@ -62,6 +62,34 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       registerBinding.sourceEntityIdMode shouldBe CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult
       registerBinding.toAssociationBinding.domain shouldBe "blob_attachment"
       registerBinding.toAssociationBinding.targetKind shouldBe "blob"
+    }
+
+    "publish Blog image relationship metadata from CML" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val relationships = component.relationshipDefinitions.map(x => x.name -> x).toMap
+      val images = relationships.getOrElse("BlogPost.images", fail("BlogPost.images relationship is missing"))
+      val inline = relationships.getOrElse("BlogPost.inlineImages", fail("BlogPost.inlineImages relationship is missing"))
+
+      images.kind shouldBe CmlEntityRelationshipDefinition.KindAssociation
+      images.sourceEntityName shouldBe "BlogPost"
+      images.targetEntityName shouldBe "Blob"
+      images.storageMode shouldBe CmlEntityRelationshipDefinition.StorageAssociationRecord
+      images.associationDomain shouldBe Some("blob_attachment")
+      images.targetKind shouldBe Some("blob")
+      images.multiplicity shouldBe Some("one-to-many")
+      images.lifecyclePolicy shouldBe Some(CmlEntityRelationshipDefinition.LifecycleIndependent)
+
+      inline.kind shouldBe CmlEntityRelationshipDefinition.KindComposition
+      inline.sourceEntityName shouldBe "BlogPost"
+      inline.targetEntityName shouldBe "BlogInlineImage"
+      inline.storageMode shouldBe CmlEntityRelationshipDefinition.StorageChildParentIdField
+      inline.parentIdField shouldBe Some("blogPostId")
+      inline.sortOrderField shouldBe Some("sortOrder")
+      inline.multiplicity shouldBe Some("one-to-many")
+      inline.lifecyclePolicy shouldBe Some(CmlEntityRelationshipDefinition.LifecycleDependent)
     }
 
     "publish the BundleFactory service entry for runtime discovery" in {

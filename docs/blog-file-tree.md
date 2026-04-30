@@ -74,13 +74,17 @@ the external Web application that embeds the fragment.
 
 ## Image Handling
 
-Entity images are declared in `META-INF/blog.yaml` and become
-`EntityImageBinding` records for thumbnail, cover, gallery, or other roles.
+Entity images are declared in `META-INF/blog.yaml`. During import, each image
+file is registered as a managed CNCF Blob with payload and metadata, then linked
+to the `BlogPost` by a `BlobAttachment` Association whose role is `primary`,
+`cover`, `thumbnail`, `gallery`, or an application-specific value.
 
 Inline images are discovered from `<img src>` in the extracted article
 fragment. Relative paths are resolved against the source HTML file, registered
-as Blob/ImageAsset, and the stored HTML fragment rewrites each `src` to the
-registered public image URL.
+as managed Blobs, attached to the `BlogPost` with `role = inline`, and the
+stored HTML fragment rewrites each `src` to the registered public image URL.
+`BlogInlineImage` records track the HTML occurrence and synchronization state;
+the image payload and entity-to-image link remain Blob + BlobAttachment data.
 
 Individual image registration, binding, and inline-image sync operations remain
 available for admin repair and maintenance; normal authoring uses the bulk

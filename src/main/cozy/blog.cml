@@ -300,6 +300,76 @@ corresponding Association row with `role = inline`.
 | sortOrder    | int      | 1            | Sort order    | 10              |
 | synchronized | boolean  | 1            | Synchronized  | true            |
 
+# RELATIONSHIP
+
+## BlogPost.images
+
+### KIND
+
+association
+
+### SOURCE
+
+BlogPost
+
+### TARGET
+
+Blob
+
+### STORAGE
+
+association-record
+
+### ASSOCIATION DOMAIN
+
+blob_attachment
+
+### TARGET KIND
+
+blob
+
+### MULTIPLICITY
+
+one-to-many
+
+### LIFECYCLE
+
+independent
+
+## BlogPost.inlineImages
+
+### KIND
+
+composition
+
+### SOURCE
+
+BlogPost
+
+### TARGET
+
+BlogInlineImage
+
+### STORAGE
+
+child-parent-id-field
+
+### PARENT ID FIELD
+
+blogPostId
+
+### SORT ORDER FIELD
+
+sortOrder
+
+### MULTIPLICITY
+
+one-to-many
+
+### LIFECYCLE
+
+dependent
+
 # COMMAND
 
 ## ImportPostTree
