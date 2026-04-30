@@ -1,6 +1,7 @@
 package org.simplemodeling.textus.blog
 
 import java.nio.file.{Files, Path, Paths}
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import cats.free.Free
 import cats.syntax.all.*
@@ -12,9 +13,11 @@ import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{Component, ComponentCreate}
 import org.goldenport.cncf.directive.{Query, SearchResult}
 import org.goldenport.cncf.entity.{EntityPersistent, EntityQuery, EntitySearchScope}
+import org.goldenport.cncf.feed.{AtomFeedProjection, AtomFeedRenderer}
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
 import org.goldenport.datatype.ContentType
+import org.goldenport.http.{HttpResponse, HttpStatus}
 import org.goldenport.id.UniversalId
 import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
@@ -100,6 +103,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     ): SearchPostsActionCall =
       SearchPostsActionCallImpl(core, action)
 
+    override def createAtomFeedActionCall(
+      core: ActionCall.Core,
+      action: AtomFeedQuery
+    ): AtomFeedActionCall =
+      AtomFeedActionCallImpl(core, action)
+
     override def createPublishPostActionCall(
       core: ActionCall.Core,
       action: PublishPostCommand
@@ -180,6 +189,37 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           limit = _int(action.record, "limit"),
           fetchedCount = records.size
         ).toRecord()
+      )
+    }
+  }
+
+  private final case class AtomFeedActionCallImpl(
+    core: ActionCall.Core,
+    override val action: AtomFeedQuery
+  ) extends AtomFeedActionCall with BlogReadActionSupport {
+    protected def build_Program: ExecUowM[OperationResponse] = {
+      val storeQuery = Query.plan(Record.empty)
+      for {
+        result <- _search_blog_posts(storeQuery)
+        visible = _filter_public_search(result.data, action.record)
+        page = _page_with_default(_sort_feed_posts(visible), action.record, 20)
+        records <- exec_from(_sequence(page.map(_public_post_record)))
+        baseUrl <- exec_from(AtomFeedProjection.resolveSiteBaseUrl(request, executionContext.runtime.resolvedParameters))
+        feed <- exec_from(AtomFeedProjection.project(
+          AtomFeedProjection.Config(
+            title = "Blog",
+            baseUrl = baseUrl,
+            selfPath = "/rest/v1/blog/blog/atomFeed",
+            entryPathPrefix = "/blog"
+          ),
+          records
+        ))
+      } yield OperationResponse.Http(
+        HttpResponse.Text(
+          HttpStatus.Ok,
+          ContentType.parse("application/atom+xml; charset=utf-8"),
+          Bag.text(AtomFeedRenderer.render(feed), StandardCharsets.UTF_8)
+        )
       )
     }
   }
@@ -678,6 +718,21 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         case None => values.drop(offset)
       }
     }
+
+    protected final def _page_with_default[A](
+      values: Vector[A],
+      record: Record,
+      defaultLimit: Int
+    ): Vector[A] = {
+      val offset = _int(record, "offset").getOrElse(0).max(0)
+      val limit = _int(record, "limit").filter(_ >= 0).getOrElse(defaultLimit)
+      values.drop(offset).take(limit)
+    }
+
+    protected final def _sort_feed_posts(posts: Vector[BlogPost]): Vector[BlogPost] =
+      posts.sortBy { post =>
+        (-post.lifecycleAttributes.updatedAt.toEpochMilli, -post.lifecycleAttributes.createdAt.toEpochMilli, post.id.value)
+      }
 
     protected final def _public_post_record(post: BlogPost): Consequence[Record] =
       _image_projection(post.id).map { projection =>

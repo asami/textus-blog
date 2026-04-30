@@ -89,3 +89,25 @@ the image payload and entity-to-image link remain Blob + BlobAttachment data.
 Individual image registration, binding, and inline-image sync operations remain
 available for admin repair and maintenance; normal authoring uses the bulk
 `importPostTree` flow.
+
+## Atom Feed
+
+BlogComponent exposes public posts through `Blog.atomFeed`, available through
+the REST operation URL `/rest/v1/blog/blog/atomFeed`. The operation uses the
+CNCF AtomFeed helper and returns Atom 1.0 XML with content type
+`application/atom+xml; charset=utf-8`.
+
+Only published and active posts appear in the feed. Draft and inactive posts
+remain private to author/admin workflows. The feed accepts the same public text
+filter semantics as `searchPosts`; when `limit` is omitted it returns up to 20
+entries.
+
+Entry URLs are generated from the configured site base URL and the post slug:
+
+```text
+{siteBaseUrl}/blog/{slug}
+```
+
+Set either `textus.site.base-url` or `cncf.site.base-url` before invoking the
+feed. `BlogPost.content` is emitted as Atom `content type="html"` using the
+stored HTML fragment.

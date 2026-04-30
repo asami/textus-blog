@@ -147,6 +147,24 @@ SearchBlogPosts
 
 SearchBlogPostsResult
 
+#### atomFeed
+
+##### TYPE
+
+QUERY
+
+##### INPUT
+
+###### TYPE
+
+AtomFeedBlogPosts
+
+##### OUTPUT
+
+###### TYPE
+
+AtomFeedBlogPostsResult
+
 #### publishPost
 
 ##### TYPE
@@ -486,6 +504,16 @@ managed image bindings.
 | offset       | int    | ?            |
 | limit        | int    | ?            |
 
+## AtomFeedBlogPosts
+
+### ATTRIBUTE
+
+| name   | type   | multiplicity |
+|--------+--------+--------------|
+| text   | string | ?            |
+| offset | int    | ?            |
+| limit  | int    | ?            |
+
 ## SearchBlogInlineImages
 
 ### ATTRIBUTE
@@ -557,6 +585,12 @@ OperationResult
 OperationResult
 
 ## SearchBlogPostsResult
+
+### EXTENDS
+
+OperationResult
+
+## AtomFeedBlogPostsResult
 
 ### EXTENDS
 

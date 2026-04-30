@@ -15,7 +15,7 @@ import org.goldenport.cncf.entity.EntityStore
 import org.goldenport.cncf.operation.{CmlEntityRelationshipDefinition, CmlOperationAssociationBinding}
 import org.goldenport.cncf.subsystem.DefaultSubsystemFactory
 import org.goldenport.datatype.ContentType
-import org.goldenport.protocol.Request
+import org.goldenport.protocol.{Property, Request}
 import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
@@ -62,6 +62,18 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       registerBinding.sourceEntityIdMode shouldBe CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult
       registerBinding.toAssociationBinding.domain shouldBe "blob_attachment"
       registerBinding.toAssociationBinding.targetKind shouldBe "blob"
+    }
+
+    "publish atomFeed operation metadata from CML" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val definitions = component.operationDefinitions.map(x => x.name -> x).toMap
+
+      definitions should contain key "atomFeed"
+      definitions("atomFeed").inputType shouldBe "AtomFeedBlogPosts"
+      definitions("atomFeed").outputType shouldBe "AtomFeedBlogPostsResult"
     }
 
     "publish Blog image relationship metadata from CML" in {
@@ -479,6 +491,67 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       result.getInt("fetchedCount") shouldBe Some(1)
       val records = _records(result, "data")
       records.map(_.getString("title")) shouldBe Vector(Some(s"$needle Published"))
+    }
+
+    "render Atom feed XML for published active posts" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_atom_feed", EntityCollectionId("textus", "account", "account"))
+      val marker = "Atom Feed Needle"
+      val draft = RegisterPostCommand(
+        Request.of("blog", "blog", "registerPost"),
+        Record.dataAuto(
+          "slug" -> "atom-feed-draft",
+          "title" -> s"$marker Draft",
+          "content" -> "<article><p>Draft body</p></article>",
+          "authorAccountId" -> authorId,
+          "publish" -> false
+        )
+      )
+      val published = RegisterPostCommand(
+        Request.of("blog", "blog", "registerPost"),
+        Record.dataAuto(
+          "slug" -> "atom-feed-published",
+          "title" -> s"$marker Published",
+          "content" -> s"<article><p>$marker Published & Body</p></article>",
+          "authorAccountId" -> authorId,
+          "publish" -> true
+        )
+      )
+      _success(component.logic.executeAction(draft, summon[ExecutionContext]))
+      _success(component.logic.executeAction(published, summon[ExecutionContext]))
+      val request = Request.of("blog", "blog", "atomFeed").copy(
+        properties = List(Property("cncf.site.base-url", "https://blog.example.test", None))
+      )
+      val action = AtomFeedQuery(
+        request,
+        Record.dataAuto(
+          "text" -> marker,
+          "limit" -> 10
+        )
+      )
+
+      val response = _success(component.logic.executeAction(action, summon[ExecutionContext]))
+
+      response match {
+        case OperationResponse.Http(http) =>
+          http.contentType.header shouldBe "application/atom+xml; charset=UTF-8"
+          val xml = http.getString.getOrElse(fail("Atom response body missing"))
+          xml should include ("""xmlns="http://www.w3.org/2005/Atom"""")
+          xml should include ("""href="https://blog.example.test/rest/v1/blog/blog/atomFeed"""")
+          xml should include ("https://blog.example.test/blog/atom-feed-published")
+          xml should include (s"$marker Published")
+          xml should include ("&lt;article&gt;&lt;p&gt;Atom Feed Needle Published &amp; Body&lt;/p&gt;&lt;/article&gt;")
+          xml should not include "atom-feed-draft"
+        case other =>
+          fail(s"expected HTTP Atom response but got $other")
+      }
     }
   }
 
