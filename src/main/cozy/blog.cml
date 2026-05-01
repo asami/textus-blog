@@ -139,6 +139,24 @@ GetBlogPost
 
 BlogPostResult
 
+#### getMyPost
+
+##### TYPE
+
+QUERY
+
+##### INPUT
+
+###### TYPE
+
+GetMyBlogPost
+
+##### OUTPUT
+
+###### TYPE
+
+BlogPostResult
+
 #### searchPosts
 
 ##### TYPE
@@ -158,6 +176,24 @@ BlogPost
 ###### TYPE
 
 SearchBlogPosts
+
+##### OUTPUT
+
+###### TYPE
+
+SearchBlogPostsResult
+
+#### searchMyPosts
+
+##### TYPE
+
+QUERY
+
+##### INPUT
+
+###### TYPE
+
+SearchMyBlogPosts
 
 ##### OUTPUT
 
@@ -548,6 +584,14 @@ managed image bindings.
 |------+----------+--------------|
 | id   | entityid | 1            |
 
+## GetMyBlogPost
+
+### ATTRIBUTE
+
+| name | type     | multiplicity |
+|------+----------+--------------|
+| id   | entityid | 1            |
+
 ## SearchBlogPosts
 
 ### ATTRIBUTE
@@ -559,6 +603,16 @@ managed image bindings.
 | text         | string | ?            |
 | offset       | int    | ?            |
 | limit        | int    | ?            |
+
+## SearchMyBlogPosts
+
+### ATTRIBUTE
+
+| name   | type   | multiplicity |
+|--------+--------+--------------|
+| text   | string | ?            |
+| offset | int    | ?            |
+| limit  | int    | ?            |
 
 ## AtomFeedBlogPosts
 

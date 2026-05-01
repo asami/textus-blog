@@ -2,6 +2,8 @@ const paths = {
   session: "/web/blog/session",
   search: "/form-api/blog-component/blog/search-posts",
   get: "/form-api/blog-component/blog/get-post",
+  searchMy: "/form-api/blog-component/blog/search-my-posts",
+  getMy: "/form-api/blog-component/blog/get-my-post",
   save: "/form-api/blog-component/blog/save-editor-post",
   importTree: "/form-api/blog-component/blog/import-post-tree",
   images: "/form-api/blog-component/blog/list-image-blobs",
@@ -11,27 +13,31 @@ const paths = {
 const state = {
   session: null,
   posts: [],
-  currentPost: null
+  currentPost: null,
+  page: document.body.dataset.page || "reader"
 };
 
 const els = {
   login: document.querySelector("[data-login-link]"),
   signup: document.querySelector("[data-signup-link]"),
+  myPosts: document.querySelector("[data-my-posts-link]"),
   logout: document.querySelector("[data-logout-form]"),
   sessionName: document.querySelector("[data-session-name]"),
   searchForm: document.querySelector("[data-search-form]"),
   postList: document.querySelector("[data-post-list]"),
+  myPostList: document.querySelector("[data-my-post-list]"),
   articleTitle: document.querySelector("[data-article-title]"),
   articleBody: document.querySelector("[data-article-body]"),
-  editorPane: document.querySelector("[data-editor-pane]"),
   editorForm: document.querySelector("[data-editor-form]"),
-  uploadForm: document.querySelector("[data-upload-form]"),
+  editorHeading: document.querySelector("[data-editor-heading]"),
   editorId: document.querySelector("[data-editor-id]"),
   editorSlug: document.querySelector("[data-editor-slug]"),
   editorTitle: document.querySelector("[data-editor-title]"),
   editorContent: document.querySelector("[data-editor-content]"),
   editorDescription: document.querySelector("[data-editor-description]"),
   editorPublish: document.querySelector("[data-editor-publish]"),
+  uploadDialog: document.querySelector("[data-upload-dialog]"),
+  uploadForm: document.querySelector("[data-upload-form]"),
   imageDialog: document.querySelector("[data-image-dialog]"),
   imageGrid: document.querySelector("[data-image-grid]"),
   toast: document.querySelector("[data-toast]")
@@ -40,31 +46,62 @@ const els = {
 document.addEventListener("DOMContentLoaded", boot);
 
 async function boot() {
-  bindEvents();
+  bindCommonEvents();
   await loadSession();
-  await loadPosts(new URLSearchParams(location.search).get("text") || "");
-  const postId = new URLSearchParams(location.search).get("post") || location.hash.replace(/^#post=/, "");
-  if (postId) {
-    await openPost(postId);
-  } else if (state.posts.length > 0) {
-    await openPost(readId(state.posts[0]));
+  if (state.page === "my") {
+    if (!requireAuth()) return;
+    bindDashboardEvents();
+    await loadMyPosts(new URLSearchParams(location.search).get("text") || "");
+  } else if (state.page === "edit") {
+    if (!requireAuth()) return;
+    bindEditorEvents();
+    await loadEditorPost();
+  } else {
+    bindReaderEvents();
+    await loadPublicPosts(new URLSearchParams(location.search).get("text") || "");
+    const postId = new URLSearchParams(location.search).get("post") || location.hash.replace(/^#post=/, "");
+    if (postId) {
+      await openPublicPost(postId);
+    } else if (state.posts.length > 0) {
+      await openPublicPost(readId(state.posts[0]));
+    }
   }
 }
 
-function bindEvents() {
-  els.searchForm.addEventListener("submit", async event => {
+function bindCommonEvents() {
+  if (els.logout) {
+    els.logout.addEventListener("submit", async event => {
+      event.preventDefault();
+      try {
+        await fetch(els.logout.action, { method: "POST", credentials: "same-origin" });
+      } finally {
+        location.href = "/web/blog";
+      }
+    });
+  }
+}
+
+function bindReaderEvents() {
+  els.searchForm?.addEventListener("submit", async event => {
     event.preventDefault();
-    await loadPosts(new FormData(els.searchForm).get("text") || "");
+    await loadPublicPosts(new FormData(els.searchForm).get("text") || "");
   });
+}
 
-  els.editorForm.addEventListener("submit", saveEditorPost);
-  els.uploadForm.addEventListener("submit", importPostTree);
-
-  document.querySelector("[data-new-post]").addEventListener("click", () => setEditor(null));
-  document.querySelector("[data-open-image-picker]").addEventListener("click", openImagePicker);
-  document.querySelectorAll("[data-editor-tab]").forEach(button => {
-    button.addEventListener("click", () => switchEditorTab(button.dataset.editorTab));
+function bindDashboardEvents() {
+  els.searchForm?.addEventListener("submit", async event => {
+    event.preventDefault();
+    await loadMyPosts(new FormData(els.searchForm).get("text") || "");
   });
+  document.querySelector("[data-open-upload-dialog]")?.addEventListener("click", () => {
+    els.uploadDialog?.showModal();
+  });
+  els.uploadForm?.addEventListener("submit", importPostTree);
+}
+
+function bindEditorEvents() {
+  els.editorForm?.addEventListener("submit", saveEditorPost);
+  document.querySelector("[data-open-image-picker]")?.addEventListener("click", openImagePicker);
 }
 
 async function loadSession() {
@@ -75,23 +112,40 @@ async function loadSession() {
     state.session = { authenticated: false };
   }
   const authenticated = Boolean(state.session?.authenticated);
-  els.login.hidden = authenticated;
+  if (els.login) els.login.hidden = authenticated;
   if (els.signup) els.signup.hidden = authenticated;
-  els.logout.hidden = !authenticated;
-  els.editorPane.hidden = !authenticated;
-  els.sessionName.textContent = authenticated ? displayUser() : "";
+  if (els.myPosts) els.myPosts.hidden = !authenticated;
+  if (els.logout) els.logout.hidden = !authenticated;
+  if (els.sessionName) els.sessionName.textContent = authenticated ? displayUser() : "";
 }
 
-async function loadPosts(text) {
+function requireAuth() {
+  if (state.session?.authenticated) return true;
+  const returnTo = encodeURIComponent(`${location.pathname}${location.search}`);
+  location.href = `/web/textus-user-account/signin?returnTo=${returnTo}`;
+  return false;
+}
+
+async function loadPublicPosts(text) {
   const form = new FormData();
   if (text) form.append("text", text);
   form.append("limit", "50");
   const result = await postForm(paths.search, form);
   state.posts = result.data || [];
-  renderPostList();
+  renderPublicPostList();
 }
 
-function renderPostList() {
+async function loadMyPosts(text) {
+  const form = new FormData();
+  if (text) form.append("text", text);
+  form.append("limit", "100");
+  const result = await postForm(paths.searchMy, form);
+  state.posts = result.data || [];
+  renderMyPostList();
+}
+
+function renderPublicPostList() {
+  if (!els.postList) return;
   els.postList.innerHTML = "";
   if (state.posts.length === 0) {
     els.postList.innerHTML = `<p class="post-row-meta">No posts.</p>`;
@@ -102,89 +156,82 @@ function renderPostList() {
     button.type = "button";
     button.className = "post-row";
     if (state.currentPost && readId(state.currentPost) === readId(post)) button.classList.add("is-active");
-    button.addEventListener("click", () => openPost(readId(post)));
-
-    const thumb = document.createElement("img");
-    thumb.className = "post-thumb";
-    thumb.alt = "";
-    thumb.src = post.representativeBlobUrl || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72'%3E%3Crect width='72' height='72' fill='%23edf0f3'/%3E%3C/svg%3E";
-
-    const text = document.createElement("div");
-    text.innerHTML = `<div class="post-row-title"></div><div class="post-row-meta"></div>`;
-    text.querySelector(".post-row-title").textContent = post.title || post.slug || readId(post);
-    text.querySelector(".post-row-meta").textContent = post.slug || "";
-
-    button.append(thumb, text);
+    button.addEventListener("click", () => openPublicPost(readId(post)));
+    button.append(postThumb(post), rowText(post.title || post.slug || readId(post), post.slug || ""));
     els.postList.append(button);
   }
 }
 
-async function openPost(id) {
+function renderMyPostList() {
+  if (!els.myPostList) return;
+  els.myPostList.innerHTML = "";
+  if (state.posts.length === 0) {
+    els.myPostList.innerHTML = `<p class="post-row-meta">No posts.</p>`;
+    return;
+  }
+  for (const post of state.posts) {
+    const row = document.createElement("div");
+    row.className = "post-row dashboard-row";
+    const body = rowText(post.title || post.slug || readId(post), `${post.slug || ""} ${statusText(post)}`);
+    const actions = document.createElement("div");
+    actions.className = "post-actions";
+    actions.append(linkButton("Edit", `/web/blog/edit?id=${encodeURIComponent(readId(post))}`));
+    if (isPublicPost(post)) {
+      actions.append(linkButton("View public", `/web/blog?post=${encodeURIComponent(readId(post))}`));
+    }
+    body.append(actions);
+    row.append(postThumb(post), body);
+    els.myPostList.append(row);
+  }
+}
+
+async function openPublicPost(id) {
   if (!id) return;
   const form = new FormData();
   form.append("id", id);
   const post = await postForm(paths.get, form);
   state.currentPost = post;
-  els.articleTitle.textContent = post.title || post.slug || "";
-  els.articleBody.innerHTML = post.content || "";
-  setEditor(post);
-  renderPostList();
+  if (els.articleTitle) els.articleTitle.textContent = post.title || post.slug || "";
+  if (els.articleBody) els.articleBody.innerHTML = post.content || "";
+  renderPublicPostList();
   history.replaceState(null, "", `/web/blog?post=${encodeURIComponent(id)}`);
 }
 
-function setEditor(post) {
-  if (!state.session?.authenticated) return;
-  if (post && !canEditPost(post)) {
-    els.editorId.value = "";
-    els.editorSlug.value = "";
-    els.editorTitle.value = "";
-    els.editorContent.value = "<article>\n  <p></p>\n</article>";
-    els.editorDescription.value = "";
-    els.editorPublish.checked = false;
+async function loadEditorPost() {
+  const id = new URLSearchParams(location.search).get("id");
+  if (!id) {
+    setEditor(null);
     return;
   }
-  els.editorId.value = post ? readId(post) : "";
-  els.editorSlug.value = post?.slug || "";
-  els.editorTitle.value = post?.title || "";
-  els.editorContent.value = post?.content || "<article>\n  <p></p>\n</article>";
-  els.editorDescription.value = post?.description || "";
-  els.editorPublish.checked = post?.draftStatus === "published";
+  const form = new FormData();
+  form.append("id", id);
+  const post = await postForm(paths.getMy, form);
+  state.currentPost = post;
+  setEditor(post);
 }
 
-function showEditorDraft(id, form) {
-  const draft = {
-    id,
-    entity_id: id,
-    slug: form.get("slug") || "",
-    title: form.get("title") || "",
-    content: form.get("content") || "",
-    description: form.get("description") || "",
-    draft_status: "draft",
-    active_status: "active",
-    author_account_id: currentUserAccountId()
-  };
-  state.currentPost = draft;
-  els.editorId.value = id || "";
-  els.articleTitle.textContent = draft.title || draft.slug || "";
-  els.articleBody.innerHTML = draft.content || "";
-  history.replaceState(null, "", "/web/blog");
+function setEditor(post) {
+  if (els.editorHeading) els.editorHeading.textContent = post ? "Edit post" : "New post";
+  if (els.editorId) els.editorId.value = post ? readId(post) : "";
+  if (els.editorSlug) els.editorSlug.value = post?.slug || "";
+  if (els.editorTitle) els.editorTitle.value = post?.title || "";
+  if (els.editorContent) els.editorContent.value = post?.content || "<article>\n  <p></p>\n</article>";
+  if (els.editorDescription) els.editorDescription.value = post?.description || "";
+  if (els.editorPublish) els.editorPublish.checked = post?.draftStatus === "published" || post?.draft_status === "published";
 }
 
 async function saveEditorPost(event) {
   event.preventDefault();
   const form = new FormData(els.editorForm);
-  if (!form.get("id") || (state.currentPost && !canEditPost(state.currentPost))) form.delete("id");
   if (!els.editorPublish.checked) form.delete("publish");
   try {
     const result = await postForm(paths.save, form);
     const savedId = result.entity_id || result.id;
-    notice("Saved.");
-    await loadPosts("");
-    if (els.editorPublish.checked && savedId) {
-      await openPost(savedId);
-    } else {
-      showEditorDraft(savedId, form);
+    if (savedId) {
+      els.editorId.value = savedId;
+      history.replaceState(null, "", `/web/blog/edit?id=${encodeURIComponent(savedId)}`);
     }
+    notice("Saved.");
   } catch (error) {
     notice(error.message, true);
   }
@@ -196,14 +243,11 @@ async function importPostTree(event) {
   const publish = Boolean(form.get("publish"));
   if (!publish) form.delete("publish");
   try {
-    const result = await postForm(paths.importTree, form);
-    const savedId = result.entity_id || result.id;
+    await postForm(paths.importTree, form);
     notice("Imported.");
     els.uploadForm.reset();
-    await loadPosts("");
-    if (publish && savedId) {
-      await openPost(savedId);
-    }
+    els.uploadDialog?.close();
+    await loadMyPosts("");
   } catch (error) {
     notice(error.message, true);
   }
@@ -215,13 +259,14 @@ async function openImagePicker() {
     form.append("limit", "100");
     const result = await postForm(paths.images, form);
     renderImages(result.data || []);
-    els.imageDialog.showModal();
+    els.imageDialog?.showModal();
   } catch (error) {
     notice(error.message, true);
   }
 }
 
 function renderImages(images) {
+  if (!els.imageGrid) return;
   els.imageGrid.innerHTML = "";
   if (images.length === 0) {
     els.imageGrid.innerHTML = `<p class="post-row-meta">No images.</p>`;
@@ -241,14 +286,6 @@ function renderImages(images) {
     });
     els.imageGrid.append(button);
   }
-}
-
-function switchEditorTab(name) {
-  document.querySelectorAll("[data-editor-tab]").forEach(button => {
-    button.classList.toggle("is-active", button.dataset.editorTab === name);
-  });
-  els.editorForm.hidden = name !== "editor";
-  els.uploadForm.hidden = name !== "upload";
 }
 
 async function postForm(url, form) {
@@ -317,11 +354,47 @@ function insertAtCursor(textarea, text) {
   textarea.selectionStart = textarea.selectionEnd = start + text.length;
 }
 
+function postThumb(post) {
+  const thumb = document.createElement("img");
+  thumb.className = "post-thumb";
+  thumb.alt = "";
+  thumb.src = post.representativeBlobUrl || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72'%3E%3Crect width='72' height='72' fill='%23edf0f3'/%3E%3C/svg%3E";
+  return thumb;
+}
+
+function rowText(title, meta) {
+  const text = document.createElement("div");
+  text.className = "post-row-body";
+  text.innerHTML = `<div class="post-row-title"></div><div class="post-row-meta"></div>`;
+  text.querySelector(".post-row-title").textContent = title;
+  text.querySelector(".post-row-meta").textContent = meta;
+  return text;
+}
+
+function linkButton(label, href) {
+  const link = document.createElement("a");
+  link.className = "button-link";
+  link.href = href;
+  link.textContent = label;
+  return link;
+}
+
 function readId(record) {
   if (!record) return "";
   if (record.entity_id) return String(record.entity_id);
   const id = record.id || record.blobId || "";
   return typeof id === "object" ? id.value || id.display || id.minor || String(id) : String(id);
+}
+
+function statusText(post) {
+  const draft = post.draftStatus || post.draft_status || "";
+  const active = post.activeStatus || post.active_status || "";
+  return [draft, active].filter(Boolean).join(" / ");
+}
+
+function isPublicPost(post) {
+  return (post.draftStatus || post.draft_status) === "published" &&
+    (post.activeStatus || post.active_status) === "active";
 }
 
 function displayUser() {
@@ -331,20 +404,8 @@ function displayUser() {
     "";
 }
 
-function canEditPost(post) {
-  const author = post?.author_account_id || post?.authorAccountId || "";
-  const current = currentUserAccountId();
-  return Boolean(author && current && String(author) === String(current));
-}
-
-function currentUserAccountId() {
-  return state.session?.attributes?.user_account_id ||
-    state.session?.attributes?.userAccountId ||
-    state.session?.principalId ||
-    "";
-}
-
 function notice(message, error = false) {
+  if (!els.toast) return;
   els.toast.textContent = message;
   els.toast.classList.toggle("is-error", error);
   els.toast.hidden = false;

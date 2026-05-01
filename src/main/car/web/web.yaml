@@ -10,6 +10,26 @@ apps:
         - /web/blog/assets/blog.css
       js:
         - /web/blog/assets/blog.js
+  - name: blog-my
+    kind: static-form
+    path: /web/blog/my
+    root: /web/blog/my
+    route: /web/blog/my
+    assets:
+      css:
+        - /web/blog/assets/blog.css
+      js:
+        - /web/blog/assets/blog.js
+  - name: blog-edit
+    kind: static-form
+    path: /web/blog/edit
+    root: /web/blog/edit
+    route: /web/blog/edit
+    assets:
+      css:
+        - /web/blog/assets/blog.css
+      js:
+        - /web/blog/assets/blog.js
 
 expose:
   blog-component.blog.import-post-tree: protected
@@ -18,7 +38,9 @@ expose:
   blog-component.blog.list-image-blobs: protected
   blog-component.blog.create-post: protected
   blog-component.blog.get-post: public
+  blog-component.blog.get-my-post: protected
   blog-component.blog.search-posts: public
+  blog-component.blog.search-my-posts: protected
   blog-component.blog.atom-feed: public
   blog-component.blog.publish-post: protected
   blog-component.blog.deactivate-post: protected
@@ -37,7 +59,7 @@ form:
         required: true
   blog-component.blog.save-editor-post:
     enabled: true
-    successRedirect: /web/blog
+    successRedirect: /web/blog/my
     stayOnError: true
     controls:
       content:
@@ -63,6 +85,10 @@ form:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-post
     stayOnError: true
+  blog-component.blog.search-my-posts:
+    enabled: true
+    successRedirect: /web/blog/my
+    stayOnError: true
   blog-component.blog.search-inline-images:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-inline-image
@@ -79,4 +105,14 @@ routes:
     target:
       component: blog-component
       app: blog
+    kind: alias
+  - path: /web/blog/my
+    target:
+      component: blog-component
+      app: blog-my
+    kind: alias
+  - path: /web/blog/edit
+    target:
+      component: blog-component
+      app: blog-edit
     kind: alias

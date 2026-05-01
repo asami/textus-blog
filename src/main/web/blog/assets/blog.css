@@ -86,23 +86,21 @@ button[type="submit"],
   font-size: 0.9rem;
 }
 
-.shell {
+.reader-shell {
   display: grid;
-  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr) minmax(320px, 420px);
+  grid-template-columns: minmax(260px, 380px) minmax(0, 1fr);
   gap: 1px;
   min-height: calc(100vh - 56px);
   background: var(--line);
 }
 
 .reader-pane,
-.article-pane,
-.editor-pane {
+.article-pane {
   background: var(--panel);
   min-width: 0;
 }
 
-.reader-pane,
-.editor-pane {
+.reader-pane {
   padding: 1rem;
 }
 
@@ -201,11 +199,74 @@ textarea {
   border-radius: 8px;
 }
 
-.editor-tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+.dashboard-shell,
+.edit-shell {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.page-head h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.page-head p {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+}
+
+.page-actions,
+.post-actions {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.25rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  padding: 0.48rem 0.75rem;
+}
+
+.dashboard-search {
+  max-width: 620px;
   margin-bottom: 1rem;
+}
+
+.dashboard-list {
+  gap: 0.75rem;
+}
+
+.dashboard-row {
+  grid-template-columns: 72px minmax(0, 1fr);
+}
+
+.post-row-body {
+  min-width: 0;
+}
+
+.editor-page-form {
+  max-width: 880px;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
 }
 
 .editor-form,
@@ -292,24 +353,23 @@ label {
 }
 
 @media (max-width: 1120px) {
-  .shell {
+  .reader-shell {
     grid-template-columns: minmax(240px, 330px) minmax(0, 1fr);
-  }
-
-  .editor-pane {
-    grid-column: 1 / -1;
-    border-top: 1px solid var(--line);
   }
 }
 
 @media (max-width: 760px) {
-  .shell {
+  .reader-shell {
     display: block;
   }
 
   .reader-pane,
-  .article-pane,
-  .editor-pane {
+  .article-pane {
     border-bottom: 1px solid var(--line);
+  }
+
+  .page-head {
+    display: grid;
+    align-items: start;
   }
 }

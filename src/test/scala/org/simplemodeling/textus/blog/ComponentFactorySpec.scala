@@ -87,8 +87,12 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       definitions should contain key "saveEditorPost"
       definitions should contain key "listImageBlobs"
+      definitions should contain key "getMyPost"
+      definitions should contain key "searchMyPosts"
       definitions("saveEditorPost").inputType shouldBe "SaveEditorBlogPost"
       definitions("listImageBlobs").inputType shouldBe "ListBlogImageBlobs"
+      definitions("getMyPost").inputType shouldBe "GetMyBlogPost"
+      definitions("searchMyPosts").inputType shouldBe "SearchMyBlogPosts"
       definitions("importPostTree").parameters.find(_.name == "fileBundle").map(_.datatype) shouldBe Some("filebundle")
     }
 
@@ -287,6 +291,72 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       visible.getString("title") shouldBe Some("Editor Post Updated")
     }
 
+    "search and load only the current author's posts for the author dashboard" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_my_posts", EntityCollectionId("textus", "account", "account"))
+      val otherId = EntityId("textus", "author_other_posts", EntityCollectionId("textus", "account", "account"))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "my-posts-author", Map("authorAccountId" -> authorId.value))
+      val mineDraft = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "my-post-draft",
+        "title" -> "My Dashboard Needle Draft",
+        "content" -> "<article><p>Draft</p></article>"
+      ))
+      val minePublished = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "my-post-published",
+        "title" -> "My Dashboard Needle Published",
+        "content" -> "<article><p>Published</p></article>",
+        "publish" -> true
+      ))
+      val myDraftRecord = _record(_success(component.logic.executeAction(mineDraft, summon[ExecutionContext])))
+      val myPublishedRecord = _record(_success(component.logic.executeAction(minePublished, summon[ExecutionContext])))
+      val otherContext = _with_authenticated_principal(baseContext, "other-posts-author", Map("authorAccountId" -> otherId.value))
+      val other = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "other-post-draft",
+        "title" -> "My Dashboard Needle Other",
+        "content" -> "<article><p>Other</p></article>"
+      ))
+      val otherRecord = _record(_success(component.logic.executeAction(other, otherContext)))
+
+      val search = SearchMyBlogPosts.unsafeForTest(Request.of("blog", "blog", "searchMyPosts"), Record.dataAuto(
+        "text" -> "My Dashboard Needle",
+        "limit" -> 10
+      ))
+      val result = _record(_success(component.logic.executeAction(search, summon[ExecutionContext])))
+
+      result.getInt("totalCount") shouldBe Some(2)
+      val rows = _records(result, "data")
+      rows.map(_.getString("title").get).toSet shouldBe Set("My Dashboard Needle Draft", "My Dashboard Needle Published")
+      val draftStatuses = rows.map(row => row.getString("draft_status").orElse(row.getString("draftStatus")))
+      draftStatuses should contain (Some("draft"))
+      draftStatuses should contain (Some("published"))
+
+      val getMine = GetMyBlogPost.unsafeForTest(Request.of("blog", "blog", "getMyPost"), Record.dataAuto(
+        "id" -> myDraftRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("my draft id missing"))
+      ))
+      _record(_success(component.logic.executeAction(getMine, summon[ExecutionContext]))).getString("title") shouldBe Some("My Dashboard Needle Draft")
+
+      val getOther = GetMyBlogPost.unsafeForTest(Request.of("blog", "blog", "getMyPost"), Record.dataAuto(
+        "id" -> otherRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("other id missing"))
+      ))
+      component.logic.executeAction(getOther, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
+
+      val publicGetDraft = GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto(
+        "id" -> myDraftRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("my draft id missing"))
+      ))
+      component.logic.executeAction(publicGetDraft, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
+      val publicGetPublished = GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto(
+        "id" -> myPublishedRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("my published id missing"))
+      ))
+      _record(_success(component.logic.executeAction(publicGetPublished, summon[ExecutionContext]))).getString("title") shouldBe Some("My Dashboard Needle Published")
+    }
+
     "reject editor updates from a different authenticated author" in {
       val subsystem = DefaultSubsystemFactory.default(Some("command"))
       val component = (new ComponentFactory)
@@ -468,8 +538,33 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       java.nio.file.Files.exists(root.resolve("src/main/car/web/web.yaml")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/web.yaml")) shouldBe false
       java.nio.file.Files.exists(root.resolve("src/main/web/blog/index.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog-my/index.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog-edit/index.html")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/blog/assets/blog.css")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/blog/assets/blog.js")) shouldBe true
+
+      val webYaml = java.nio.file.Files.readString(root.resolve("src/main/car/web/web.yaml"))
+      webYaml should include ("/web/blog/my")
+      webYaml should include ("/web/blog/edit")
+      webYaml should include ("blog-component.blog.search-my-posts: protected")
+      webYaml should include ("blog-component.blog.get-my-post: protected")
+
+      val publicHtml = java.nio.file.Files.readString(root.resolve("src/main/web/blog/index.html"))
+      publicHtml should include ("returnTo=%2Fweb%2Fblog%2Fmy")
+      publicHtml should include ("data-my-posts-link")
+      publicHtml should not include "data-editor-form"
+      publicHtml should not include "data-upload-form"
+
+      val myHtml = java.nio.file.Files.readString(root.resolve("src/main/web/blog-my/index.html"))
+      myHtml should include ("data-my-post-list")
+      myHtml should include ("data-open-upload-dialog")
+      myHtml should include ("data-upload-form")
+      myHtml should include ("/web/blog/edit")
+
+      val editHtml = java.nio.file.Files.readString(root.resolve("src/main/web/blog-edit/index.html"))
+      editHtml should include ("data-editor-form")
+      editHtml should include ("data-open-image-picker")
+      editHtml should include ("data-image-dialog")
     }
 
     "register existing Blob images through BlobAttachment Association" in {

@@ -107,11 +107,23 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     ): GetPostActionCall =
       GetPostActionCallImpl(core, action)
 
+    override def createGetMyPostActionCall(
+      core: ActionCall.Core,
+      action: GetMyBlogPost
+    ): GetMyPostActionCall =
+      GetMyPostActionCallImpl(core, action)
+
     override def createSearchPostsActionCall(
       core: ActionCall.Core,
       action: SearchBlogPosts
     ): SearchPostsActionCall =
       SearchPostsActionCallImpl(core, action)
+
+    override def createSearchMyPostsActionCall(
+      core: ActionCall.Core,
+      action: SearchMyBlogPosts
+    ): SearchMyPostsActionCall =
+      SearchMyPostsActionCallImpl(core, action)
 
     override def createAtomFeedActionCall(
       core: ActionCall.Core,
@@ -193,6 +205,20 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       } yield OperationResponse(record)
   }
 
+  private final case class GetMyPostActionCallImpl(
+    core: ActionCall.Core,
+    override val action: GetMyBlogPost
+  ) extends GetMyPostActionCall with BlogReadActionSupport {
+    protected def build_Program: ExecUowM[OperationResponse] =
+      for {
+        author <- exec_from(_current_author_account_id())
+        id <- exec_from(_entity_id(action.record, "id"))
+        post <- _load_blog_post(id)
+        _ <- exec_from(_assert_editor_author(post, author))
+        record <- exec_from(_public_post_record(post))
+      } yield OperationResponse(record)
+  }
+
   private final case class SearchPostsActionCallImpl(
     core: ActionCall.Core,
     override val action: SearchBlogPosts
@@ -203,6 +229,32 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       for {
         result <- _search_blog_posts(storeQuery)
         visible = _filter_public_search(result.data, action.record)
+        page = _page(visible, action.record)
+        records <- exec_from(_sequence(page.map(_public_post_record)))
+      } yield OperationResponse(
+        SearchResult(
+          query = responseQuery,
+          data = records,
+          totalCount = Some(visible.size),
+          offset = _int(action.record, "offset"),
+          limit = _int(action.record, "limit"),
+          fetchedCount = records.size
+        ).toRecord()
+      )
+    }
+  }
+
+  private final case class SearchMyPostsActionCallImpl(
+    core: ActionCall.Core,
+    override val action: SearchMyBlogPosts
+  ) extends SearchMyPostsActionCall with BlogReadActionSupport {
+    protected def build_Program: ExecUowM[OperationResponse] = {
+      val storeQuery = Query.plan(Record.empty)
+      val responseQuery = Query.plan(action.record, limit = _int(action.record, "limit"), offset = _int(action.record, "offset"))
+      for {
+        author <- exec_from(_current_author_account_id())
+        result <- _search_blog_posts(storeQuery)
+        visible = _filter_author_search(result.data, action.record, author)
         page = _page(visible, action.record)
         records <- exec_from(_sequence(page.map(_public_post_record)))
       } yield OperationResponse(
@@ -1007,6 +1059,49 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         case None => Consequence.argumentMissing(names.head)
       }
 
+    protected final def _current_author_account_id(): Consequence[EntityId] = {
+      val subject = SecuritySubject.current(using executionContext)
+      if (!subject.isAuthenticated) {
+        Consequence.operationInvalid("Blog authoring requires an authenticated session")
+      } else {
+        val candidates = Vector(
+          subject.attributes.get("authorAccountId"),
+          subject.attributes.get("author_account_id"),
+          subject.attributes.get("userAccountId"),
+          subject.attributes.get("user_account_id"),
+          subject.attributes.get("accountId"),
+          subject.attributes.get("account_id"),
+          Some(subject.subjectId)
+        ).flatten.map(_.trim).filter(_.nonEmpty)
+        candidates.flatMap(x => EntityId.parse(x).toOption).headOption match {
+          case Some(id) => Consequence.success(id)
+          case None =>
+            val collection = EntityCollectionId("textus", "account", "account")
+            Consequence.success(EntityId("textus", _safe_subject_id(subject.subjectId), collection))
+        }
+      }
+    }
+
+    private def _safe_subject_id(value: String): String = {
+      val sanitized = value.map {
+        case c if c.isLetterOrDigit || c == '_' => c
+        case _ => '_'
+      }.mkString
+      sanitized.headOption match {
+        case Some(c) if c.isLetter => sanitized
+        case _ => s"id_${sanitized}"
+      }
+    }
+
+    protected final def _assert_editor_author(
+      post: BlogPost,
+      author: EntityId
+    ): Consequence[Unit] =
+      if (post.authorAccountId.value == author.value)
+        Consequence.unit
+      else
+        Consequence.operationInvalid("Blog editor update requires the post author")
+
     private def _optional_entity_id(
       record: Record,
       collection: EntityCollectionId,
@@ -1063,6 +1158,18 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       _string(record, "text").map(_normalize_text).fold(publicPosts) { needle =>
         publicPosts.filter(post => _search_text(post).contains(needle))
       }
+    }
+
+    protected final def _filter_author_search(
+      posts: Vector[BlogPost],
+      record: Record,
+      author: EntityId
+    ): Vector[BlogPost] = {
+      val owned = posts.filter(_.authorAccountId.value == author.value)
+      val searched = _string(record, "text").map(_normalize_text).fold(owned) { needle =>
+        owned.filter(post => _search_text(post).contains(needle))
+      }
+      _sort_feed_posts(searched)
     }
 
     protected final def _page[A](
