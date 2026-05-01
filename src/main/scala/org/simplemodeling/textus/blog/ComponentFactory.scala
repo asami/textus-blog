@@ -3,20 +3,23 @@ package org.simplemodeling.textus.blog
 import java.nio.file.{Files, Path, Paths}
 import java.nio.charset.StandardCharsets
 import java.util.UUID
+import scala.util.Using
+import scala.util.matching.Regex
 import cats.free.Free
 import cats.syntax.all.*
 import org.goldenport.*
 import org.goldenport.bag.Bag
 import org.goldenport.cncf.action.ActionCall
-import org.goldenport.cncf.association.{AssociationCreate, AssociationDomain, AssociationRepository, AssociationStoragePolicy}
+import org.goldenport.cncf.association.{AssociationCreate, AssociationDomain, AssociationFilter, AssociationRepository, AssociationStoragePolicy}
 import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{Component, ComponentCreate}
 import org.goldenport.cncf.directive.{Query, SearchResult}
-import org.goldenport.cncf.entity.{EntityPersistent, EntityQuery, EntitySearchScope}
+import org.goldenport.cncf.entity.{EntityPersistent, EntityQuery, EntitySearchScope, EntityStore}
 import org.goldenport.cncf.feed.{AtomFeedProjection, AtomFeedRenderer}
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
+import org.goldenport.cncf.security.SecuritySubject
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
-import org.goldenport.datatype.ContentType
+import org.goldenport.datatype.{ContentType, FileBundle}
 import org.goldenport.http.{HttpResponse, HttpStatus}
 import org.goldenport.id.UniversalId
 import org.goldenport.protocol.operation.OperationResponse
@@ -33,7 +36,8 @@ import org.goldenport.cncf.blob.BlobRepository.given
 
 /*
  * @since   Apr. 29, 2026
- * @version Apr. 30, 2026
+ *  version Apr. 30, 2026
+ * @version May.  1, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactory
@@ -59,7 +63,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             acceptsArchiveBlobId = true,
             createsAttachment = true,
             roles = BlogComponentRuntimeFactory.ImageRoles,
-            parameters = Vector("archiveBlobId", "entityImages", "inlineImages"),
+            parameters = Vector("fileBundle", "archiveBlobId", "entityImages", "inlineImages"),
             sourceEntityIdMode = CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult
           )))
         case definition if definition.name == "registerPost" =>
@@ -91,6 +95,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     ): RegisterPostActionCall =
       RegisterPostActionCallImpl(core, action)
 
+    override def createSaveEditorPostActionCall(
+      core: ActionCall.Core,
+      action: SaveEditorPostCommand
+    ): SaveEditorPostActionCall =
+      SaveEditorPostActionCallImpl(core, action)
+
     override def createGetPostActionCall(
       core: ActionCall.Core,
       action: GetPostQuery
@@ -108,6 +118,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       action: AtomFeedQuery
     ): AtomFeedActionCall =
       AtomFeedActionCallImpl(core, action)
+
+    override def createListImageBlobsActionCall(
+      core: ActionCall.Core,
+      action: ListImageBlobsQuery
+    ): ListImageBlobsActionCall =
+      ListImageBlobsActionCallImpl(core, action)
 
     override def createPublishPostActionCall(
       core: ActionCall.Core,
@@ -134,13 +150,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ) extends ImportPostTreeActionCall with BlogRegistrationActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
+        sourceRecord <- exec_from(_with_current_author_if_missing(action.record))
         source <- _import_tree_source(action.record)
         response <- {
           for {
             draft <- exec_from(BlogFileTreeImportSupport.normalizeTreeWithInlineImageUrls(source.root) { img =>
               Some(BlobUrl.cncfRoute(_blob_id(img.treePath.getOrElse(img.sourcePath))).displayUrl)
             })
-            register = _register_record(action.record, draft)
+            register = _register_record(sourceRecord, draft)
             response <- _register(register, Some(source.root))
           } yield response
         }.guarantee(exec_from(_cleanup_import_tree_source(source)))
@@ -153,6 +170,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ) extends RegisterPostActionCall with BlogRegistrationActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       _register(action.record, None)
+  }
+
+  private final case class SaveEditorPostActionCallImpl(
+    core: ActionCall.Core,
+    override val action: SaveEditorPostCommand
+  ) extends SaveEditorPostActionCall with BlogRegistrationActionSupport {
+    protected def build_Program: ExecUowM[OperationResponse] =
+      _save_editor_post(action.record)
   }
 
   private final case class GetPostActionCallImpl(
@@ -224,6 +249,17 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     }
   }
 
+  private final case class ListImageBlobsActionCallImpl(
+    core: ActionCall.Core,
+    override val action: ListImageBlobsQuery
+  ) extends ListImageBlobsActionCall with BlogRegistrationActionSupport {
+    protected def build_Program: ExecUowM[OperationResponse] =
+      for {
+        _ <- exec_from(_require_authenticated())
+        response <- exec_from(_list_image_blobs(action.record))
+      } yield OperationResponse(response)
+  }
+
   private final case class PublishPostActionCallImpl(
     core: ActionCall.Core,
     override val action: PublishPostCommand
@@ -232,7 +268,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       for {
         id <- exec_from(_entity_id(action.record, "id"))
         post <- entity_load[BlogPost](id)
-        updated = post.copy(draftStatus = "published")
+        updated = post.copy(id = id, draftStatus = "published")
         _ <- entity_save(updated)
       } yield OperationResponse(updated.toRecord())
   }
@@ -245,13 +281,61 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       for {
         id <- exec_from(_entity_id(action.record, "id"))
         post <- entity_load[BlogPost](id)
-        updated = post.copy(activeStatus = "inactive")
+        updated = post.copy(id = id, activeStatus = "inactive")
         _ <- entity_save(updated)
       } yield OperationResponse(updated.toRecord())
   }
 
   private trait BlogRegistrationActionSupport { self: ActionCall =>
   protected final case class BlogImportTreeSource(root: Path, temporary: Boolean)
+
+  protected final def _save_editor_post(record: Record): ExecUowM[OperationResponse] =
+    for {
+      author <- exec_from(_current_author_account_id())
+      id = _optional_entity_id(record, BlogPost.collectionId, "id")
+      slug <- exec_from(_required_string(record, "slug"))
+      title <- exec_from(_required_string(record, "title"))
+      content <- exec_from(_required_string(record, "content"))
+      inlineSpecs <- exec_from(_inline_image_specs_from_editor_content(content))
+      _ <- exec_from(_validate_editor_inline_specs(inlineSpecs))
+      publish = _boolean(record, "publish").getOrElse(false)
+      saved <- id match {
+        case Some(postId) =>
+          for {
+            post <- entity_load[BlogPost](postId)
+            _ <- exec_from(_assert_editor_author(post, author))
+            updated = post.copy(
+              id = postId,
+              nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withTitle(title).build(),
+              descriptiveAttributes = org.simplemodeling.model.value.DescriptiveAttributes.Builder(post.descriptiveAttributes).withContent(content).build(),
+              slug = slug,
+              draftStatus = (if (publish) "published" else "draft"),
+              activeStatus = "active"
+            )
+            _ <- _save_blog_post_direct(updated)
+          } yield (updated.id, updated.toRecord())
+        case None =>
+          for {
+            post <- exec_from(BlogPostCreate.createC(
+              Record.dataAuto(
+                "id" -> _id(BlogPost.collectionId, slug),
+                "slug" -> slug,
+                "title" -> title,
+                "content" -> content,
+                "authorAccountId" -> author,
+                "draftStatus" -> (if (publish) "published" else "draft"),
+                "activeStatus" -> "active"
+              )
+            ))
+            created <- entity_create(post)
+          } yield (created.id, created.toRecord)
+      }
+      inlineCount <- _sync_editor_inline_images(saved._1, inlineSpecs)
+    } yield OperationResponse(
+      _post_response_record(saved._2, saved._1) ++ Record.dataAuto(
+        "inlineImageCount" -> inlineCount
+      )
+    )
 
   protected final def _register(
     record: Record,
@@ -268,8 +352,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       inlineImages <- _create_inline_images(postId, inlineImageSpecs, treeRoot)
     } yield {
       OperationResponse(
-        created.toRecord ++ Record.dataAuto(
-          "entity_id" -> created.id.value,
+        _post_response_record(created.toRecord, created.id) ++ Record.dataAuto(
           "entityImageCount" -> entityImages.size,
           "inlineImageCount" -> inlineImages.size
         )
@@ -294,6 +377,20 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               Consequence.argumentInvalid(s"registerPost inlineImages[$index] requires existingBlobId; local path payloads must be imported through importPostTree")
           }
         }.getOrElse(Consequence.unit)
+    }
+
+  private def _post_response_record(record: Record, id: EntityId): Record =
+    Record.dataAuto(
+      "id" -> id,
+      "entity_id" -> id.value,
+      "draft_status" -> _string(record, "draftStatus", "draft_status").orNull,
+      "active_status" -> _string(record, "activeStatus", "active_status").orNull
+    )
+
+  private def _save_blog_post_direct(post: BlogPost): ExecUowM[Unit] =
+    exec_from {
+      given org.goldenport.cncf.context.ExecutionContext = executionContext
+      EntityStore.standard().save(post)
     }
 
   private def _create_entity_images(
@@ -322,13 +419,83 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         z.flatMap { images =>
           for {
             blobId <- _ensure_inline_blob(spec, treeRoot, index)
-            association <- exec_from(_blob_association(postId, blobId, "inline", spec.sortOrder.orElse(Some(index)), _inline_image_attributes(spec)))
+            association <- exec_from(_blob_association(postId, blobId, "inline", spec.sortOrder.orElse(Some(index)), _inline_image_attributes(spec), Some(index.toString)))
             _ <- entity_create(association)
             inline <- exec_from(_blog_inline_image(postId, Some(blobId), spec, index))
             _ <- entity_create(inline)
           } yield images :+ inline
         }
     }
+
+  private def _sync_editor_inline_images(
+    postId: EntityId,
+    specs: Vector[BlogInlineImageSpec]
+  ): ExecUowM[Int] =
+    for {
+      _ <- _delete_existing_inline_images(postId)
+      _ <- exec_from(_delete_existing_inline_associations(postId))
+      images <- _create_inline_images(postId, specs, None)
+    } yield images.size
+
+  private def _validate_editor_inline_specs(
+    specs: Vector[BlogInlineImageSpec]
+  ): Consequence[Unit] =
+    specs.foldLeft(Consequence.unit) {
+      case (z, spec) =>
+        z.flatMap { _ =>
+          spec.existingBlobId
+            .map(_verify_blob)
+            .getOrElse(Consequence.argumentInvalid("editor inline images require existing Blob ids"))
+        }
+    }
+
+  private def _assert_editor_author(
+    post: BlogPost,
+    author: EntityId
+  ): Consequence[Unit] =
+    if (post.authorAccountId.value == author.value)
+      Consequence.unit
+    else
+      Consequence.operationInvalid("Blog editor update requires the post author")
+
+  private def _delete_existing_inline_images(postId: EntityId): ExecUowM[Unit] =
+    for {
+      values <- exec_from(_find_inline_images(postId))
+      _ <- values.foldLeft(exec_pure(())) { case (z, image) =>
+        z.flatMap(_ => entity_delete_hard(image.id))
+      }
+    } yield ()
+
+  private def _find_inline_images(postId: EntityId): Consequence[Vector[BlogInlineImage]] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    EntityStore.standard()
+      .search[BlogInlineImage](EntityQuery(BlogInlineImage.collectionId, Query.plan(Record.empty), EntitySearchScope.Store))
+      .map(_.data.map(_normalize_inline_image).filter(_.blogPostId == postId))
+  }
+
+  private def _normalize_inline_image(image: BlogInlineImage): BlogInlineImage =
+    image.copy(
+      id = _with_collection(image.id, BlogInlineImage.collectionId),
+      blogPostId = _with_collection(image.blogPostId, BlogPost.collectionId),
+      blobId = image.blobId.map(_with_collection(_, BlobRepository.CollectionId))
+    )
+
+  private def _delete_existing_inline_associations(postId: EntityId): Consequence[Unit] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    val repository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+    repository.list(AssociationFilter(
+      domain = AssociationDomain.BlobAttachment,
+      sourceEntityId = Some(_association_source_id(postId)),
+      targetKind = Some("blob"),
+      role = Some("inline")
+    )).flatMap { associations =>
+      associations.foldLeft(Consequence.unit) {
+        case (z, association) =>
+          val normalized = association.copy(id = _with_collection(association.id, AssociationStoragePolicy.BlobAttachmentCollection))
+          z.flatMap(_ => repository.delete(normalized))
+      }
+    }
+  }
 
   private def _ensure_entity_blob(
     spec: BlogEntityImageSpec,
@@ -404,6 +571,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       author <- _entity_id(record, "authorAccountId", "author_account_id")
       post <- BlogPostCreate.createC(
         record ++ Record.dataAuto(
+          "id" -> record.getAny("id").getOrElse(_id(BlogPost.collectionId, s)),
           "slug" -> s,
           "title" -> t,
           "content" -> c,
@@ -420,13 +588,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     blobId: EntityId,
     role: String,
     sortOrder: Option[Int],
-    attributes: Map[String, String]
+    attributes: Map[String, String],
+    discriminator: Option[String] = None
   ): Consequence[AssociationCreate] =
     Consequence.success(
       AssociationCreate(
-        id = None,
+        id = Some(_id(AssociationStoragePolicy.BlobAttachmentCollection, Vector(Some(postId.display), Some(role), discriminator, Some(blobId.display)).flatten.mkString("-"))),
         associationId = UUID.randomUUID().toString,
-        sourceEntityId = postId.value,
+        sourceEntityId = _association_source_id(postId),
         targetEntityId = blobId.value,
         targetKind = Some("blob"),
         role = role,
@@ -437,6 +606,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       )
     )
 
+  private def _association_source_id(postId: EntityId): String =
+    postId.display
+
   private def _blog_inline_image(
     postId: EntityId,
     blobId: Option[EntityId],
@@ -445,9 +617,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ): Consequence[BlogInlineImageCreate] =
     BlogInlineImageCreate.createC(
       Record.dataAuto(
-        "id" -> _id(BlogInlineImage.collectionId, s"${postId.value}-inline-$index"),
+        "id" -> _id(BlogInlineImage.collectionId, s"${postId.display}-inline-$index"),
         "blogPostId" -> postId,
-        "blobId" -> blobId,
         "sourceUrl" -> spec.path.orElse(spec.clientId).orElse(blobId.map(_.value)).getOrElse(s"inline-$index"),
         "altText" -> spec.altText,
         "titleText" -> spec.titleText,
@@ -557,9 +728,15 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     }.getOrElse(Vector.empty)
 
   protected final def _import_tree_source(record: Record): ExecUowM[BlogImportTreeSource] =
-    _string(record, "treeRootPath", "tree_root_path")
-      .map { _ =>
-        exec_from(_tree_root(record).map(BlogImportTreeSource(_, temporary = false)))
+    _file_bundle_value(record)
+      .map { value =>
+        exec_from(_file_bundle_tree(value).map(BlogImportTreeSource(_, temporary = true)))
+      }
+      .orElse {
+        _string(record, "treeRootPath", "tree_root_path")
+          .map { _ =>
+            exec_from(_tree_root(record).map(BlogImportTreeSource(_, temporary = false)))
+          }
       }
       .getOrElse {
         for {
@@ -573,6 +750,22 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           root <- exec_from(BlogFileTreeImportSupport.extractZipTree(bytes))
         } yield BlogImportTreeSource(root, temporary = true)
       }
+
+  private def _file_bundle_value(record: Record): Option[Any] =
+    record.getAny("fileBundle").orElse(record.getAny("file_bundle"))
+
+  private def _file_bundle_tree(value: Any): Consequence[Path] =
+    FileBundle.create("fileBundle", value).flatMap { bundle =>
+      bundle.toMimeBody.flatMap { body =>
+        try {
+          val bytes = Using.resource(body.value.openInputStream())(_.readAllBytes())
+          BlogFileTreeImportSupport.extractZipTree(bytes)
+        } catch {
+          case e: Exception =>
+            Consequence.operationInvalid(s"failed to read fileBundle payload: ${e.getMessage}")
+        }
+      }
+    }
 
   protected final def _cleanup_import_tree_source(source: BlogImportTreeSource): Consequence[Unit] =
     if (source.temporary)
@@ -589,22 +782,72 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         else
           Consequence.operationInvalid(s"Blog file tree root is not a directory: ${path}")
       }
-      .getOrElse(Consequence.operationInvalid("importPostTree requires treeRootPath or archiveBlobId"))
+      .getOrElse(Consequence.operationInvalid("importPostTree requires fileBundle, treeRootPath, or archiveBlobId"))
 
   private def _archive_blob_id(record: Record): Consequence[EntityId] =
-    _optional_entity_id(record, "archiveBlobId", "archive_blob_id")
+    _optional_entity_id(record, BlobRepository.CollectionId, "archiveBlobId", "archive_blob_id")
       .map(Consequence.success)
       .getOrElse(Consequence.argumentMissing("archiveBlobId"))
 
+  private def _optional_entity_id(
+    record: Record,
+    collection: EntityCollectionId,
+    names: String*
+  ): Option[EntityId] =
+    _optional_entity_id(record, names*).map(_with_collection(_, collection))
+
   private def _optional_entity_id(record: Record, names: String*): Option[EntityId] =
     names.iterator.flatMap { name =>
-      record.getAsC[EntityId](name).toOption.flatten.orElse {
-        record.getAny(name).flatMap {
-          case id: EntityId => Some(id)
-          case value => EntityId.parse(value.toString.trim).toOption
-        }
+      record.getAny(name).flatMap {
+        case id: EntityId => Some(id)
+        case value => EntityId.parse(value.toString.trim).toOption
+      }.orElse {
+        record.getAsC[EntityId](name).toOption.flatten
       }
     }.nextOption()
+
+  private def _with_collection(id: EntityId, collection: EntityCollectionId): EntityId =
+    if (id.collection == collection)
+      id
+    else
+      EntityId(id.major, id.minor, collection, id.timestamp, id.entropy)
+
+  protected final def _with_current_author_if_missing(record: Record): Consequence[Record] =
+    if (_has_any(record, "authorAccountId", "author_account_id"))
+      Consequence.success(record)
+    else
+      _current_author_account_id().map { author =>
+        record ++ Record.dataAuto("authorAccountId" -> author)
+      }
+
+  protected final def _current_author_account_id(): Consequence[EntityId] = {
+    val subject = SecuritySubject.current(using executionContext)
+    if (!subject.isAuthenticated) {
+      Consequence.operationInvalid("Blog authoring requires an authenticated session")
+    } else {
+      val candidates = Vector(
+        subject.attributes.get("authorAccountId"),
+        subject.attributes.get("author_account_id"),
+        subject.attributes.get("userAccountId"),
+        subject.attributes.get("user_account_id"),
+        subject.attributes.get("accountId"),
+        subject.attributes.get("account_id"),
+        Some(subject.subjectId)
+      ).flatten.map(_.trim).filter(_.nonEmpty)
+      candidates.flatMap(x => EntityId.parse(x).toOption).headOption match {
+        case Some(id) => Consequence.success(id)
+        case None =>
+          val collection = EntityCollectionId("textus", "account", "account")
+          Consequence.success(EntityId("textus", _safe_id(subject.subjectId, collection), collection))
+      }
+    }
+  }
+
+  protected final def _require_authenticated(): Consequence[Unit] =
+    if (SecuritySubject.current(using executionContext).isAuthenticated)
+      Consequence.unit
+    else
+      Consequence.operationInvalid("Blog operation requires an authenticated session")
 
   private def _component: Consequence[Component] =
     component match {
@@ -613,7 +856,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     }
 
   private def _entity_id(record: Record, names: String*): Consequence[EntityId] =
-    names.iterator.flatMap(name => record.getAsC[EntityId](name).toOption.flatten).nextOption() match {
+    _optional_entity_id(record, names*) match {
       case Some(id) => Consequence.success(id)
       case None => Consequence.argumentMissing(names.head)
     }
@@ -631,23 +874,48 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       case other => scala.util.Try(other.toString.trim.toBoolean).toOption
     }.nextOption()
 
+  private def _int(record: Record, names: String*): Option[Int] =
+    names.iterator.flatMap(record.getAny).flatMap {
+      case i: java.lang.Integer => Some(i.intValue)
+      case i: Int => Some(i)
+      case s: String => scala.util.Try(s.trim.toInt).toOption
+      case other => scala.util.Try(other.toString.trim.toInt).toOption
+    }.nextOption()
+
   protected final def _blob_id(key: String): EntityId =
     _id(BlobRepository.CollectionId, key)
 
   private def _id(collection: EntityCollectionId, key: String): EntityId =
     EntityId(
       collection.major,
-      _safe_id(key),
+      _safe_id(key, collection),
       collection,
       Some(UniversalId.StableTimestamp),
       Some(UniversalId.StableEntropy)
     )
 
-  private def _safe_id(value: String): String =
-    BlobStoreSupport.safeSegment(value).replace("-", "_").replace(".", "_") match {
+  private def _safe_id(value: String, collection: EntityCollectionId): String =
+    _bounded_id(BlobStoreSupport.safeSegment(value).replace("-", "_").replace(".", "_"), collection) match {
       case s if s.headOption.exists(_.isLetter) => s
       case s => s"id_${s}"
     }
+
+  private def _bounded_id(value: String, collection: EntityCollectionId): String = {
+    val max = _entity_minor_max(collection)
+    if (value.length <= max)
+      value
+    else {
+      val suffix = java.lang.Integer.toHexString(value.hashCode)
+      val prefix = (max - suffix.length - 1).max(1)
+      s"${value.take(prefix)}_${suffix}".take(max)
+    }
+  }
+
+  private def _entity_minor_max(collection: EntityCollectionId): Int = {
+    val maxEntityIdLength = 60
+    val fixed = collection.major.length + "-entity-".length + collection.name.length + "-0-stable".length + 1
+    (maxEntityIdLength - fixed).max(8)
+  }
 
   private def _content_type(path: String): String =
     path.toLowerCase(java.util.Locale.ROOT) match {
@@ -659,14 +927,84 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     }
 
   private def _slug_from_title(title: String): String =
-    _safe_id(title)
+    _safe_id(title, BlogPost.collectionId)
+
+  private def _inline_image_specs_from_editor_content(content: String): Consequence[Vector[BlogInlineImageSpec]] = {
+    val records = BlogComponentRuntimeFactory.extractBlobContentImageIds(content).zipWithIndex.map { case (blobId, index) =>
+      Record.dataAuto(
+        "existingBlobId" -> blobId,
+        "clientId" -> blobId.display,
+        "sortOrder" -> index
+      )
+    }
+    _inline_image_specs(Record.dataAuto("inlineImages" -> records))
+  }
+
+  protected final def _list_image_blobs(record: Record): Consequence[Record] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    val text = _string(record, "text").map(_.toLowerCase(java.util.Locale.ROOT))
+    val offset = _int(record, "offset").getOrElse(0).max(0)
+    val limit = _int(record, "limit").filter(_ >= 0)
+    BlobRepository.entityStore().list().map { values =>
+      val filtered = values
+        .filter(_.kind == BlobKind.Image)
+        .filter { blob =>
+          text.forall { needle =>
+            Vector(
+              blob.id.value,
+              blob.filename.getOrElse(""),
+              blob.contentType.map(_.header).getOrElse("")
+            ).exists(_.toLowerCase(java.util.Locale.ROOT).contains(needle))
+          }
+        }
+        .sortBy(blob => (-blob.updatedAt.toEpochMilli, blob.id.value))
+      val page = limit.map(l => filtered.drop(offset).take(l)).getOrElse(filtered.drop(offset))
+      SearchResult(
+        query = Query.plan(record, offset = Some(offset), limit = limit),
+        data = page.map(_image_blob_record),
+        totalCount = Some(filtered.size),
+        offset = Some(offset),
+        limit = limit,
+        fetchedCount = page.size
+      ).toRecord()
+    }
+  }
+
+  private def _image_blob_record(blob: Blob): Record =
+    Record.dataAuto(
+      "id" -> blob.id,
+      "filename" -> blob.filename,
+      "contentType" -> blob.contentType.map(_.header),
+      "url" -> blob.accessUrl.displayUrl,
+      "created" -> blob.createdAt.toString,
+      "updated" -> blob.updatedAt.toString
+    )
   }
 
   private trait BlogReadActionSupport { self: ActionCall =>
     protected final def _entity_id(record: Record, names: String*): Consequence[EntityId] =
-      names.iterator.flatMap(name => record.getAsC[EntityId](name).toOption.flatten).nextOption() match {
+      _optional_entity_id(record, BlogPost.collectionId, names*) match {
         case Some(id) => Consequence.success(id)
         case None => Consequence.argumentMissing(names.head)
+      }
+
+    private def _optional_entity_id(
+      record: Record,
+      collection: EntityCollectionId,
+      names: String*
+    ): Option[EntityId] =
+      names.iterator.flatMap { name =>
+        record.getAny(name).flatMap {
+          case id: EntityId => Some(id)
+          case value => EntityId.parse(value.toString.trim).toOption
+        }.orElse {
+          record.getAsC[EntityId](name).toOption.flatten
+        }
+      }.nextOption().map { id =>
+        if (id.collection == collection)
+          id
+        else
+          EntityId(id.major, id.minor, collection, id.timestamp, id.entropy)
       }
 
     protected final def _public_visible(post: BlogPost): Consequence[Unit] =
@@ -748,7 +1086,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       given org.goldenport.cncf.context.ExecutionContext = executionContext
       val associations = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
       val blobs = BlobRepository.entityStore()
-      BlobProjection.entityImageProjection(postId.value)(
+      BlobProjection.entityImageProjection(postId.display)(
         BlobProjection.Loaders(
           listAssociations = filter => associations.list(filter),
           loadBlob = id => blobs.get(id)
@@ -803,4 +1141,33 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 object BlogComponentRuntimeFactory {
   val ImageRoles: Vector[String] =
     Vector("primary", "cover", "thumbnail", "gallery", "inline")
+
+  private val BlobContentImagePattern: Regex =
+    """/web/blob/content/([^"'?\s<>#]+)""".r
+
+  def extractBlobContentImageIds(content: String): Vector[EntityId] =
+    BlobContentImagePattern.findAllMatchIn(content).map { m =>
+      _blob_entity_id(m.group(1))
+    }.toVector
+
+  private def _blob_entity_id(value: String): EntityId =
+    EntityId.parse(value).toOption match {
+      case Some(id) =>
+        EntityId(id.major, id.minor, BlobRepository.CollectionId, id.timestamp, id.entropy)
+      case None =>
+        EntityId("cncf", _safe_id(value), BlobRepository.CollectionId)
+    }
+
+  private def _safe_id(value: String): String = {
+    val raw = BlobStoreSupport.safeSegment(value).replace("-", "_").replace(".", "_")
+    val bounded =
+      if (raw.length <= 32)
+        raw
+      else
+        s"${raw.take(23)}_${java.lang.Integer.toHexString(raw.hashCode)}"
+    if (bounded.headOption.exists(_.isLetter))
+      bounded
+    else
+      s"id_${bounded}"
+  }
 }

@@ -1,18 +1,48 @@
+defaultView: summary
+apps:
+  - name: blog
+    kind: static-form
+    path: /web/blog
+    root: /web/blog
+    route: /web/blog
+    assets:
+      css:
+        - /web/blog/assets/blog.css
+      js:
+        - /web/blog/assets/blog.js
+
 expose:
   blog-component.blog.import-post-tree: protected
   blog-component.blog.register-post: protected
+  blog-component.blog.save-editor-post: protected
+  blog-component.blog.list-image-blobs: protected
   blog-component.blog.create-post: protected
   blog-component.blog.get-post: public
   blog-component.blog.search-posts: public
+  blog-component.blog.atom-feed: public
   blog-component.blog.publish-post: protected
   blog-component.blog.deactivate-post: protected
   blog-component.blog.sync-inline-images: protected
   blog-component.blog.search-inline-images: public
+
 form:
   blog-component.blog.import-post-tree:
     enabled: true
-    successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
+    successRedirect: /web/blog
     stayOnError: true
+    controls:
+      fileBundle:
+        type: file
+        accept: .zip,application/zip
+        required: true
+  blog-component.blog.save-editor-post:
+    enabled: true
+    successRedirect: /web/blog
+    stayOnError: true
+    controls:
+      content:
+        type: textarea
+        required: true
   blog-component.blog.register-post:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
@@ -37,8 +67,16 @@ form:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-inline-image
     stayOnError: true
+
 admin:
   entity.blog-post:
     totalCount: optional
   entity.blog-inline-image:
     totalCount: optional
+
+routes:
+  - path: /web/blog
+    target:
+      component: blog-component
+      app: blog
+    kind: alias

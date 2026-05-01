@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blog</title>
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/web/blog">Blog</a>
+      <nav class="topbar-actions">
+        <a href="/web/blog/login" data-login-link>Log in</a>
+        <form action="/web/blog/logout" method="post" data-logout-form hidden>
+          <button type="submit">Log out</button>
+        </form>
+        <span class="session-name" data-session-name></span>
+      </nav>
+    </header>
+
+    <main class="shell">
+      <section class="reader-pane">
+        <div class="list-toolbar">
+          <form class="search-form" data-search-form>
+            <input type="search" name="text" placeholder="Search posts" autocomplete="off">
+            <button type="submit">Search</button>
+          </form>
+          <a class="feed-link" href="/rest/v1/blog/blog/atomFeed">Atom</a>
+        </div>
+        <div class="post-list" data-post-list></div>
+      </section>
+
+      <section class="article-pane" data-article-pane>
+        <article class="blog-article" data-article>
+          <h1 data-article-title></h1>
+          <div class="article-body" data-article-body></div>
+        </article>
+      </section>
+
+      <section class="editor-pane" data-editor-pane hidden>
+        <div class="editor-tabs" role="tablist">
+          <button type="button" class="tab is-active" data-editor-tab="editor">Editor</button>
+          <button type="button" class="tab" data-editor-tab="upload">Upload</button>
+        </div>
+
+        <form class="editor-form" data-editor-form>
+          <input type="hidden" name="id" data-editor-id>
+          <label>
+            Slug
+            <input name="slug" data-editor-slug required>
+          </label>
+          <label>
+            Title
+            <input name="title" data-editor-title required>
+          </label>
+          <label>
+            Content
+            <textarea name="content" data-editor-content required></textarea>
+          </label>
+          <label>
+            Description
+            <input name="description" data-editor-description>
+          </label>
+          <label class="checkbox-line">
+            <input type="checkbox" name="publish" data-editor-publish>
+            Publish
+          </label>
+          <div class="editor-actions">
+            <button type="button" data-new-post>New</button>
+            <button type="button" data-open-image-picker>Images</button>
+            <button type="submit">Save</button>
+          </div>
+        </form>
+
+        <form class="upload-form" data-upload-form hidden>
+          <label>
+            Blog file bundle
+            <input type="file" name="fileBundle" accept=".zip,application/zip" required>
+          </label>
+          <label class="checkbox-line">
+            <input type="checkbox" name="publish">
+            Publish
+          </label>
+          <button type="submit">Import</button>
+        </form>
+      </section>
+    </main>
+
+    <dialog class="image-dialog" data-image-dialog>
+      <form method="dialog" class="dialog-head">
+        <strong>Images</strong>
+        <button type="submit">Close</button>
+      </form>
+      <div class="image-grid" data-image-grid></div>
+    </dialog>
+
+    <div class="toast" data-toast hidden></div>
+    <script src="/web/blog/assets/blog.js"></script>
+  </body>
+</html>

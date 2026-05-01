@@ -1,12 +1,15 @@
 # Blog File Tree Import
 
 BlogComponent accepts a local-previewable article file tree through
-`importPostTree`. During Phase 19 the executable development-driver input is
-`treeRootPath`, which points at an already expanded local tree. `archiveBlobId`
-remains the stable operation contract for the archived tree transport. The
-operation is the user-facing bulk registration boundary; it normalizes the tree
-and delegates to `registerPost`, which accepts an already normalized HTML
-article fragment plus image specifications.
+`importPostTree`. The Web/client input is `fileBundle`, a CNCF `filebundle`
+parameter that can be supplied as a directory, single file, or existing ZIP and
+is transported over HTTP as an `application/zip` payload. `archiveBlobId`
+remains the managed-Blob archive path, and `treeRootPath` remains a local
+development-driver path for an already expanded tree.
+
+The operation is the user-facing bulk registration boundary; it normalizes the
+tree and delegates to `registerPost`, which accepts an already normalized HTML
+article fragment plus existing Blob image references.
 
 ## Tree Layout
 
@@ -89,6 +92,34 @@ the image payload and entity-to-image link remain Blob + BlobAttachment data.
 Individual image registration, binding, and inline-image sync operations remain
 available for admin repair and maintenance; normal authoring uses the bulk
 `importPostTree` flow.
+
+## Blog Web App
+
+The component-owned Blog Web app is packaged with CAR metadata at
+`src/main/car/web/web.yaml` and public Web resources under `src/main/web/blog`.
+It is served at `/web/blog` when the component Web descriptor is active.
+
+Anonymous users can list and view only published active posts. Logged-in users
+can create or edit posts through the editor and can upload a Blog file tree
+through `importPostTree(fileBundle)`.
+
+The Phase 19 editor is intentionally simple: `BlogPost.content` is edited as an
+HTML fragment in a textarea. Save uses `saveEditorPost`; the author account is
+derived from the authenticated session rather than from client-supplied form
+data. A save without `publish=true` creates a draft, while `publish=true`
+stores the post as published and active.
+
+The editor image picker calls `listImageBlobs`, shows managed Blob metadata
+where `kind = image`, and inserts this fragment at the textarea cursor:
+
+```html
+<img src="/web/blob/content/{blobId}" alt="">
+```
+
+On save, BlogComponent extracts those Blob content URLs, recreates the post's
+inline `BlobAttachment` Associations, and synchronizes `BlogInlineImage`
+occurrence records. The Blob and BlobAttachment rows remain the canonical image
+state.
 
 ## Atom Feed
 

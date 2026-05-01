@@ -14,16 +14,17 @@ import org.goldenport.cncf.context.{ExecutionContext, SecurityContext}
 import org.goldenport.cncf.entity.EntityStore
 import org.goldenport.cncf.operation.{CmlEntityRelationshipDefinition, CmlOperationAssociationBinding}
 import org.goldenport.cncf.subsystem.DefaultSubsystemFactory
-import org.goldenport.datatype.ContentType
+import org.goldenport.datatype.{ContentType, FileBundle, MimeBody}
 import org.goldenport.protocol.{Property, Request}
 import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
-import org.simplemodeling.textus.blog.entity.BlogPost
+import org.simplemodeling.textus.blog.entity.{BlogInlineImage, BlogPost}
 
 /*
  * @since   Apr. 29, 2026
- * @version Apr. 30, 2026
+ *  version Apr. 30, 2026
+ * @version May.  1, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactorySpec extends AnyWordSpec with Matchers {
@@ -53,6 +54,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       importBinding.acceptsArchiveBlobId shouldBe true
       importBinding.createsAttachment shouldBe true
       importBinding.roles should contain allOf ("primary", "cover", "thumbnail", "gallery", "inline")
+      importBinding.parameters should contain ("fileBundle")
       importBinding.parameters should contain ("archiveBlobId")
       registerBinding.acceptsExistingBlobId shouldBe true
       registerBinding.createsAttachment shouldBe true
@@ -74,6 +76,20 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       definitions should contain key "atomFeed"
       definitions("atomFeed").inputType shouldBe "AtomFeedBlogPosts"
       definitions("atomFeed").outputType shouldBe "AtomFeedBlogPostsResult"
+    }
+
+    "publish Blog Web app operation metadata from CML" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val definitions = component.operationDefinitions.map(x => x.name -> x).toMap
+
+      definitions should contain key "saveEditorPost"
+      definitions should contain key "listImageBlobs"
+      definitions("saveEditorPost").inputType shouldBe "SaveEditorBlogPost"
+      definitions("listImageBlobs").inputType shouldBe "ListBlogImageBlobs"
+      definitions("importPostTree").parameters.find(_.name == "fileBundle").map(_.datatype) shouldBe Some("filebundle")
     }
 
     "publish Blog image relationship metadata from CML" in {
@@ -173,6 +189,287 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         service.blobStore.get(inlineBlobMetadata.storageRef.getOrElse(fail("inline Blob has no storageRef")))
       })
       inlineBlob.payload.openInputStream().readAllBytes().toVector shouldBe "inline-bytes".getBytes(java.nio.charset.StandardCharsets.UTF_8).toVector
+    }
+
+    "import a Blog filebundle and derive author from authenticated principal" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_filebundle", EntityCollectionId("textus", "account", "account"))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "filebundle-author", Map("authorAccountId" -> authorId.value))
+      val archive = _zip(Vector(
+        "META-INF/blog.yaml" ->
+          """slug: filebundle-post
+            |entryHtmlPath: index.html
+            |title: FileBundle title
+            |""".stripMargin,
+        "index.html" ->
+          """<html><head><title>HTML title</title></head>
+            |<body><article><p>FileBundle body</p><img src="images/inline.png" alt="Inline"></article></body></html>""".stripMargin,
+        "images/inline.png" -> "inline-filebundle-bytes"
+      ))
+      val fileBundle = FileBundle(MimeBody(ContentType.APPLICATION_ZIP, Bag.binary(archive)))
+      val action = ImportPostTreeCommand(Request.of("blog", "blog", "importPostTree"), Record.dataAuto(
+        "fileBundle" -> fileBundle,
+        "publish" -> true
+      ))
+
+      val response = _record(_success(component.logic.executeAction(action, summon[ExecutionContext])))
+
+      response.getInt("inlineImageCount") shouldBe Some(1)
+      val postId = response.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
+      stored.authorAccountId.value shouldBe authorId.value
+      _associations(postId).map(_.role) should contain ("inline")
+    }
+
+    "save editor posts from authenticated users and resynchronize inline images on update" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_editor", EntityCollectionId("textus", "account", "account"))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-author", Map("authorAccountId" -> authorId.value))
+      val firstBlob = EntityId("cncf", "editor_inline_first", BlobRepository.CollectionId)
+      val secondBlob = EntityId("cncf", "editor_inline_second", BlobRepository.CollectionId)
+      Vector(firstBlob -> "first", secondBlob -> "second").foreach { case (id, body) =>
+        _success(BlobPayloadSupport.putManagedPayload(
+          component = component,
+          id = id,
+          kind = BlobKind.Image,
+          filename = Some(s"${body}.png"),
+          contentType = ContentType.IMAGE_PNG,
+          payload = Bag.binary(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+        ))
+      }
+      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "editor-post",
+        "title" -> "Editor Post",
+        "content" -> s"""<article><p>Body</p><img src="/web/blob/content/${firstBlob.value}" alt=""></article>"""
+      ))
+
+      val created = _record(_success(component.logic.executeAction(create, summon[ExecutionContext])))
+      val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+
+      created.getString("entity_id") shouldBe Some(postId.value)
+      created.getInt("inlineImageCount") shouldBe Some(1)
+      _associations(postId).map(_.targetEntityId) should contain (firstBlob.value)
+
+      val update = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "id" -> postId,
+        "slug" -> "editor-post",
+        "title" -> "Editor Post Updated",
+        "content" -> s"""<article><p>Body</p><img src="/web/blob/content/${secondBlob.value}" alt=""></article>""",
+        "publish" -> true
+      ))
+      val updated = _record(_success(component.logic.executeAction(update, summon[ExecutionContext])))
+
+      updated.getInt("inlineImageCount") shouldBe Some(1)
+      val updatedStored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("updated post missing"))
+      updatedStored.draftStatus shouldBe "published"
+      val associations = _associations(postId)
+      associations.map(_.targetEntityId) should contain (secondBlob.value)
+      associations.map(_.targetEntityId) should not contain firstBlob.value
+      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(secondBlob.display)
+      val visible = _record(_success(component.logic.executeAction(
+        GetPostQuery(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId)),
+        summon[ExecutionContext]
+      )))
+      visible.getString("title") shouldBe Some("Editor Post Updated")
+    }
+
+    "reject editor updates from a different authenticated author" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_editor_owner", EntityCollectionId("textus", "account", "account"))
+      val otherId = EntityId("textus", "author_editor_other", EntityCollectionId("textus", "account", "account"))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-owner", Map("authorAccountId" -> authorId.value))
+      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "owned-editor-post",
+        "title" -> "Owned Editor Post",
+        "content" -> "<article><p>Original</p></article>"
+      ))
+      val created = _record(_success(component.logic.executeAction(create, summon[ExecutionContext])))
+      val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      val otherContext = _with_authenticated_principal(baseContext, "editor-other", Map("authorAccountId" -> otherId.value))
+      val update = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "id" -> postId,
+        "slug" -> "owned-editor-post",
+        "title" -> "Hijacked",
+        "content" -> "<article><p>Changed</p></article>",
+        "publish" -> true
+      ))
+
+      component.logic.executeAction(update, otherContext) shouldBe a[Consequence.Failure[_]]
+
+      val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
+      stored.toRecord().getString("title") shouldBe Some("Owned Editor Post")
+      stored.draftStatus shouldBe "draft"
+    }
+
+    "validate editor inline Blob refs before saving or deleting old inline bindings" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_editor_invalid_blob", EntityCollectionId("textus", "account", "account"))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-invalid-blob", Map("authorAccountId" -> authorId.value))
+      val validBlob = EntityId("cncf", "editor_valid_inline", BlobRepository.CollectionId)
+      val missingBlob = EntityId("cncf", "editor_missing_inline", BlobRepository.CollectionId)
+      _success(BlobPayloadSupport.putManagedPayload(
+        component = component,
+        id = validBlob,
+        kind = BlobKind.Image,
+        filename = Some("valid.png"),
+        contentType = ContentType.IMAGE_PNG,
+        payload = Bag.binary("valid".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      ))
+      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "editor-invalid-blob",
+        "title" -> "Editor Invalid Blob",
+        "content" -> s"""<article><p>Original</p><img src="/web/blob/content/${validBlob.value}" alt=""></article>"""
+      ))
+      val created = _record(_success(component.logic.executeAction(create, summon[ExecutionContext])))
+      val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      val update = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "id" -> postId,
+        "slug" -> "editor-invalid-blob",
+        "title" -> "Should Not Save",
+        "content" -> s"""<article><p>Broken</p><img src="/web/blob/content/${missingBlob.value}" alt=""></article>""",
+        "publish" -> true
+      ))
+
+      component.logic.executeAction(update, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
+
+      val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
+      stored.toRecord().getString("title") shouldBe Some("Editor Invalid Blob")
+      stored.draftStatus shouldBe "draft"
+      _associations(postId).map(_.targetEntityId) should contain (validBlob.value)
+      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(validBlob.display)
+    }
+
+    "allow the same Blob image to appear in multiple inline occurrences" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val authorId = EntityId("textus", "author_editor_duplicate_inline", EntityCollectionId("textus", "account", "account"))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-duplicate-inline", Map("authorAccountId" -> authorId.value))
+      val blobId = EntityId("cncf", "editor_duplicate_inline_blob", BlobRepository.CollectionId)
+      _success(BlobPayloadSupport.putManagedPayload(
+        component = component,
+        id = blobId,
+        kind = BlobKind.Image,
+        filename = Some("duplicate.png"),
+        contentType = ContentType.IMAGE_PNG,
+        payload = Bag.binary("duplicate".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      ))
+      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "editor-duplicate-inline",
+        "title" -> "Editor Duplicate Inline",
+        "content" -> s"""<article><img src="/web/blob/content/${blobId.value}" alt=""><p>Again</p><img src="/web/blob/content/${blobId.value}" alt=""></article>"""
+      ))
+
+      val created = _record(_success(component.logic.executeAction(create, summon[ExecutionContext])))
+
+      created.getInt("inlineImageCount") shouldBe Some(2)
+      val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(blobId.display, blobId.display)
+      _associations(postId).filter(_.targetEntityId == blobId.value).map(_.role) shouldBe Vector("inline", "inline")
+    }
+
+    "reject anonymous editor save and image listing" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      val save = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "anonymous-editor",
+        "title" -> "Anonymous",
+        "content" -> "<article><p>Body</p></article>"
+      ))
+      val list = ListImageBlobsQuery(Request.of("blog", "blog", "listImageBlobs"), Record.empty)
+
+      component.logic.executeAction(save, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
+      component.logic.executeAction(list, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
+    }
+
+    "list only image Blob metadata for the editor picker" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      )
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-picker-user")
+      val imageBlob = EntityId("cncf", "picker_image_blob", BlobRepository.CollectionId)
+      val attachmentBlob = EntityId("cncf", "picker_attachment_blob", BlobRepository.CollectionId)
+      _success(BlobPayloadSupport.putManagedPayload(
+        component = component,
+        id = imageBlob,
+        kind = BlobKind.Image,
+        filename = Some("picker.png"),
+        contentType = ContentType.IMAGE_PNG,
+        payload = Bag.binary("image".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+      ))
+      _success(BlobPayloadSupport.putManagedPayload(
+        component = component,
+        id = attachmentBlob,
+        kind = BlobKind.Attachment,
+        filename = Some("archive.zip"),
+        contentType = ContentType.APPLICATION_ZIP,
+        payload = Bag.binary(_zip(Vector("index.html" -> "<html></html>")))
+      ))
+      val action = ListImageBlobsQuery(Request.of("blog", "blog", "listImageBlobs"), Record.dataAuto(
+        "text" -> "picker",
+        "limit" -> 10
+      ))
+
+      val response = _record(_success(component.logic.executeAction(action, summon[ExecutionContext])))
+
+      val rows = _records(response, "data")
+      rows.map(_.getAsC[EntityId]("id").toOption.flatten) should contain (Some(imageBlob))
+      rows.map(_.getAsC[EntityId]("id").toOption.flatten) should not contain Some(attachmentBlob)
+      rows.head.getString("url") shouldBe Some(s"/web/blob/content/${imageBlob.value}")
+    }
+
+    "place the Blog Web app in CAR metadata and Web app resource roots" in {
+      val root = java.nio.file.Paths.get(".").toAbsolutePath.normalize()
+
+      java.nio.file.Files.exists(root.resolve("src/main/car/web/web.yaml")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/web.yaml")) shouldBe false
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog/index.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog/assets/blog.css")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog/assets/blog.js")) shouldBe true
     }
 
     "register existing Blob images through BlobAttachment Association" in {
@@ -560,10 +857,21 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault).list(
         AssociationFilter(
           domain = AssociationDomain.BlobAttachment,
-          sourceEntityId = Some(postId.value),
+          sourceEntityId = Some(postId.display),
           targetKind = Some("blob")
         )
       )
+    )
+
+  private def _inline_images(postId: EntityId)(using ExecutionContext): Vector[BlogInlineImage] =
+    _success(
+      EntityStore.standard()
+        .search[BlogInlineImage](org.goldenport.cncf.entity.EntityQuery(
+          BlogInlineImage.collectionId,
+          org.goldenport.cncf.directive.Query.plan(Record.empty),
+          org.goldenport.cncf.entity.EntitySearchScope.Store
+        ))
+        .map(_.data.filter(_.blogPostId == postId).sortBy(_.sortOrder))
     )
 
   private def _record(response: OperationResponse): Record =
@@ -597,6 +905,32 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       ExecutionContext.withRuntimeContext(secured, runtime)
     lazy val runtime =
       secured.runtime.withUnitOfWorkContext(rebound, "component-factory-spec")
+    rebound
+  }
+
+  private def _with_authenticated_principal(
+    context: ExecutionContext,
+    principalId: String,
+    attrs: Map[String, String] = Map.empty
+  ): ExecutionContext = {
+    lazy val secured = ExecutionContext.withSecurityContext(
+      context,
+      SecurityContext(
+        principal = new org.goldenport.cncf.context.Principal {
+          def id: org.goldenport.cncf.context.PrincipalId =
+            org.goldenport.cncf.context.PrincipalId(principalId)
+          def attributes: Map[String, String] =
+            attrs + ("authenticated" -> "true")
+        },
+        capabilities = Set.empty,
+        level = org.goldenport.cncf.context.SecurityLevel("user"),
+        subjectKind = org.goldenport.cncf.context.SubjectKind.User
+      )
+    )
+    lazy val rebound: ExecutionContext =
+      ExecutionContext.withRuntimeContext(secured, runtime)
+    lazy val runtime =
+      secured.runtime.withUnitOfWorkContext(rebound, "component-factory-spec-authenticated")
     rebound
   }
 

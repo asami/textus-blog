@@ -69,6 +69,24 @@ RegisterBlogPost
 
 RegisterBlogPostResult
 
+#### saveEditorPost
+
+##### TYPE
+
+COMMAND
+
+##### INPUT
+
+###### TYPE
+
+SaveEditorBlogPost
+
+##### OUTPUT
+
+###### TYPE
+
+SaveEditorBlogPostResult
+
 #### createPost
 
 ##### TYPE
@@ -164,6 +182,24 @@ AtomFeedBlogPosts
 ###### TYPE
 
 AtomFeedBlogPostsResult
+
+#### listImageBlobs
+
+##### TYPE
+
+QUERY
+
+##### INPUT
+
+###### TYPE
+
+ListBlogImageBlobs
+
+##### OUTPUT
+
+###### TYPE
+
+ListBlogImageBlobsResult
 
 #### publishPost
 
@@ -394,8 +430,9 @@ dependent
 
 ### DESCRIPTION
 
-User-facing bulk import command. `archiveBlobId` points to a Blob containing a
-Blog article file tree. The tree must contain `META-INF/blog.yaml`; metadata in
+User-facing bulk import command. `fileBundle` is the Web/client transport for a
+Blog article file tree. `archiveBlobId` points to a Blob containing the same
+tree as a ZIP archive. The tree must contain `META-INF/blog.yaml`; metadata in
 that file is authoritative, and missing values may fall back to the HTML head.
 `treeRootPath` is the local development-driver input for an already expanded
 tree.
@@ -408,6 +445,7 @@ image paths, and calls `RegisterBlogPost`.
 
 | name            | type     | multiplicity |
 |-----------------+----------+--------------|
+| fileBundle      | filebundle | ?          |
 | archiveBlobId   | entityid | ?            |
 | treeRootPath    | string   | ?            |
 | entryHtmlPath   | string   | ?            |
@@ -435,6 +473,24 @@ Lower-level bulk registration command. `content` is a normalized HTML fragment.
 | canonicalPath   | string              | ?            |
 | entityImages    | BlogEntityImageSpec | *            |
 | inlineImages    | BlogInlineImageSpec | *            |
+
+## SaveEditorBlogPost
+
+### DESCRIPTION
+
+Editor-facing save command. Author is derived from the authenticated session;
+client-supplied author account ids are ignored.
+
+### ATTRIBUTE
+
+| name        | type     | multiplicity |
+|-------------+----------+--------------|
+| id          | entityid | ?            |
+| slug        | string   | 1            |
+| title       | string   | 1            |
+| content     | string   | 1            |
+| description | string   | ?            |
+| publish     | boolean  | ?            |
 
 ## CreateBlogPost
 
@@ -514,6 +570,16 @@ managed image bindings.
 | offset | int    | ?            |
 | limit  | int    | ?            |
 
+## ListBlogImageBlobs
+
+### ATTRIBUTE
+
+| name   | type   | multiplicity |
+|--------+--------+--------------|
+| text   | string | ?            |
+| offset | int    | ?            |
+| limit  | int    | ?            |
+
 ## SearchBlogInlineImages
 
 ### ATTRIBUTE
@@ -572,6 +638,12 @@ use `clientId` for `cid:` references.
 
 OperationResult
 
+## SaveEditorBlogPostResult
+
+### EXTENDS
+
+OperationResult
+
 ## CreateBlogPostResult
 
 ### EXTENDS
@@ -591,6 +663,12 @@ OperationResult
 OperationResult
 
 ## AtomFeedBlogPostsResult
+
+### EXTENDS
+
+OperationResult
+
+## ListBlogImageBlobsResult
 
 ### EXTENDS
 

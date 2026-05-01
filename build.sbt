@@ -19,8 +19,6 @@ val cncfVersion = sampleVersion("CNCF_VERSION", "cncf-version.conf", "0.4.6-SNAP
 val simpleModelingModelVersion = sampleVersion("SIMPLEMODELING_MODEL_VERSION", "simplemodeling-model-version.conf", "0.1.6-SNAPSHOT")
 val cncfCollaboratorApiVersion = "0.1.0"
 
-lazy val packageCar = taskKey[File]("Create versioned CAR archive.")
-
 lazy val root = project
   .in(file("."))
   .enablePlugins(org.goldenport.cozy.CozyPlugin)
@@ -71,20 +69,6 @@ lazy val root = project
       "boundedContext" -> "content",
       "domain" -> "blog"
     ),
-
-    packageCar := {
-      val out = target.value / "car" / s"${name.value}-${version.value}.car"
-      val sourcedir = baseDirectory.value / "car.d"
-      val pairs =
-        if (sourcedir.exists())
-          sbt.Path.allSubpaths(sourcedir).toSeq
-        else
-          Seq.empty
-      IO.createDirectory(out.getParentFile)
-      IO.zip(pairs, out, None)
-      streams.value.log.info(s"CAR archive: ${out.getAbsolutePath}")
-      out
-    },
 
     Compile / sourceGenerators += Def.task {
       val out = (Compile / sourceManaged).value / "domain" / "meta" / "BuildVersion.scala"
