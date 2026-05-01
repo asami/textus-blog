@@ -4,7 +4,8 @@ const paths = {
   get: "/form-api/blog-component/blog/get-post",
   save: "/form-api/blog-component/blog/save-editor-post",
   importTree: "/form-api/blog-component/blog/import-post-tree",
-  images: "/form-api/blog-component/blog/list-image-blobs"
+  images: "/form-api/blog-component/blog/list-image-blobs",
+  jobs: "/rest/v1/job_control/job/await_job_result"
 };
 
 const state = {
@@ -15,6 +16,7 @@ const state = {
 
 const els = {
   login: document.querySelector("[data-login-link]"),
+  signup: document.querySelector("[data-signup-link]"),
   logout: document.querySelector("[data-logout-form]"),
   sessionName: document.querySelector("[data-session-name]"),
   searchForm: document.querySelector("[data-search-form]"),
@@ -74,6 +76,7 @@ async function loadSession() {
   }
   const authenticated = Boolean(state.session?.authenticated);
   els.login.hidden = authenticated;
+  if (els.signup) els.signup.hidden = authenticated;
   els.logout.hidden = !authenticated;
   els.editorPane.hidden = !authenticated;
   els.sessionName.textContent = authenticated ? displayUser() : "";
@@ -131,6 +134,15 @@ async function openPost(id) {
 
 function setEditor(post) {
   if (!state.session?.authenticated) return;
+  if (post && !canEditPost(post)) {
+    els.editorId.value = "";
+    els.editorSlug.value = "";
+    els.editorTitle.value = "";
+    els.editorContent.value = "<article>\n  <p></p>\n</article>";
+    els.editorDescription.value = "";
+    els.editorPublish.checked = false;
+    return;
+  }
   els.editorId.value = post ? readId(post) : "";
   els.editorSlug.value = post?.slug || "";
   els.editorTitle.value = post?.title || "";
@@ -139,16 +151,40 @@ function setEditor(post) {
   els.editorPublish.checked = post?.draftStatus === "published";
 }
 
+function showEditorDraft(id, form) {
+  const draft = {
+    id,
+    entity_id: id,
+    slug: form.get("slug") || "",
+    title: form.get("title") || "",
+    content: form.get("content") || "",
+    description: form.get("description") || "",
+    draft_status: "draft",
+    active_status: "active",
+    author_account_id: currentUserAccountId()
+  };
+  state.currentPost = draft;
+  els.editorId.value = id || "";
+  els.articleTitle.textContent = draft.title || draft.slug || "";
+  els.articleBody.innerHTML = draft.content || "";
+  history.replaceState(null, "", "/web/blog");
+}
+
 async function saveEditorPost(event) {
   event.preventDefault();
   const form = new FormData(els.editorForm);
-  if (!form.get("id")) form.delete("id");
+  if (!form.get("id") || (state.currentPost && !canEditPost(state.currentPost))) form.delete("id");
   if (!els.editorPublish.checked) form.delete("publish");
   try {
     const result = await postForm(paths.save, form);
+    const savedId = result.entity_id || result.id;
     notice("Saved.");
     await loadPosts("");
-    await openPost(result.entity_id || result.id);
+    if (els.editorPublish.checked && savedId) {
+      await openPost(savedId);
+    } else {
+      showEditorDraft(savedId, form);
+    }
   } catch (error) {
     notice(error.message, true);
   }
@@ -157,13 +193,17 @@ async function saveEditorPost(event) {
 async function importPostTree(event) {
   event.preventDefault();
   const form = new FormData(els.uploadForm);
-  if (!form.get("publish")) form.delete("publish");
+  const publish = Boolean(form.get("publish"));
+  if (!publish) form.delete("publish");
   try {
     const result = await postForm(paths.importTree, form);
+    const savedId = result.entity_id || result.id;
     notice("Imported.");
     els.uploadForm.reset();
     await loadPosts("");
-    await openPost(result.entity_id || result.id);
+    if (publish && savedId) {
+      await openPost(savedId);
+    }
   } catch (error) {
     notice(error.message, true);
   }
@@ -214,18 +254,59 @@ function switchEditorTab(name) {
 async function postForm(url, form) {
   const headers = {};
   if (state.session?.sessionId) headers["x-textus-session"] = state.session.sessionId;
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     method: "POST",
     credentials: "same-origin",
     headers,
     body: form
   });
-  const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let text = await response.text();
+  if (response.ok && isJobId(text)) {
+    const awaited = await awaitJobResult(text.trim());
+    response = awaited.response;
+    text = awaited.text;
+  }
+  const data = parsePayload(text, response.statusText);
   if (!response.ok || data.status === "failure") {
-    throw new Error(data.message || data.error || response.statusText);
+    throw new Error(errorMessage(data, response.statusText));
   }
   return data.result || data;
+}
+
+function isJobId(value) {
+  return /^cncf-job-job-/.test((value || "").trim());
+}
+
+async function awaitJobResult(jobId) {
+  const body = new URLSearchParams();
+  body.set("id", jobId);
+  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  if (state.session?.sessionId) headers["x-textus-session"] = state.session.sessionId;
+  const response = await fetch(paths.jobs, {
+    method: "POST",
+    credentials: "same-origin",
+    headers,
+    body
+  });
+  const text = await response.text();
+  return { response, text };
+}
+
+function parsePayload(text, fallback) {
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return { status: "failure", message: text || fallback };
+  }
+}
+
+function errorMessage(data, fallback) {
+  if (data.message) return data.message;
+  if (typeof data.error === "string") return data.error;
+  if (data.error?.message) return data.error.message;
+  if (data.error?.code) return data.error.code;
+  return fallback;
 }
 
 function insertAtCursor(textarea, text) {
@@ -246,6 +327,19 @@ function readId(record) {
 function displayUser() {
   return state.session?.attributes?.login_name ||
     state.session?.attributes?.email ||
+    state.session?.principalId ||
+    "";
+}
+
+function canEditPost(post) {
+  const author = post?.author_account_id || post?.authorAccountId || "";
+  const current = currentUserAccountId();
+  return Boolean(author && current && String(author) === String(current));
+}
+
+function currentUserAccountId() {
+  return state.session?.attributes?.user_account_id ||
+    state.session?.attributes?.userAccountId ||
     state.session?.principalId ||
     "";
 }

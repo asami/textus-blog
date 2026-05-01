@@ -33,8 +33,8 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
   "ComponentFactory" should {
     "wire executable bulk blog operations instead of generated placeholders" in {
       val factory = new ComponentFactory
-      val importAction = ImportPostTreeCommand(null, Record.empty)
-      val registerAction = RegisterPostCommand(null, Record.empty)
+      val importAction = ImportPostTree.unsafeForTest(null, Record.empty)
+      val registerAction = RegisterBlogPost.unsafeForTest(null, Record.empty)
       val importCore = ActionCall.Core(importAction, null.asInstanceOf[ExecutionContext], None, None)
       val registerCore = ActionCall.Core(registerAction, null.asInstanceOf[ExecutionContext], None, None)
 
@@ -167,7 +167,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       ))
       val authorId = EntityId("textus", "author_1", EntityCollectionId("textus", "account", "account"))
       val request = Request.of("blog", "blog", "importPostTree")
-      val action = ImportPostTreeCommand(request, Record.dataAuto(
+      val action = ImportPostTree.unsafeForTest(request, Record.dataAuto(
         "archiveBlobId" -> archiveId,
         "authorAccountId" -> authorId,
         "publish" -> true
@@ -214,7 +214,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         "images/inline.png" -> "inline-filebundle-bytes"
       ))
       val fileBundle = FileBundle(MimeBody(ContentType.APPLICATION_ZIP, Bag.binary(archive)))
-      val action = ImportPostTreeCommand(Request.of("blog", "blog", "importPostTree"), Record.dataAuto(
+      val action = ImportPostTree.unsafeForTest(Request.of("blog", "blog", "importPostTree"), Record.dataAuto(
         "fileBundle" -> fileBundle,
         "publish" -> true
       ))
@@ -251,7 +251,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           payload = Bag.binary(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         ))
       }
-      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val create = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "editor-post",
         "title" -> "Editor Post",
         "content" -> s"""<article><p>Body</p><img src="/web/blob/content/${firstBlob.value}" alt=""></article>"""
@@ -264,7 +264,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       created.getInt("inlineImageCount") shouldBe Some(1)
       _associations(postId).map(_.targetEntityId) should contain (firstBlob.value)
 
-      val update = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val update = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "id" -> postId,
         "slug" -> "editor-post",
         "title" -> "Editor Post Updated",
@@ -281,7 +281,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       associations.map(_.targetEntityId) should not contain firstBlob.value
       _inline_images(postId).map(_.sourceUrl) shouldBe Vector(secondBlob.display)
       val visible = _record(_success(component.logic.executeAction(
-        GetPostQuery(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId)),
+        GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId)),
         summon[ExecutionContext]
       )))
       visible.getString("title") shouldBe Some("Editor Post Updated")
@@ -299,7 +299,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val authorId = EntityId("textus", "author_editor_owner", EntityCollectionId("textus", "account", "account"))
       val otherId = EntityId("textus", "author_editor_other", EntityCollectionId("textus", "account", "account"))
       given ExecutionContext = _with_authenticated_principal(baseContext, "editor-owner", Map("authorAccountId" -> authorId.value))
-      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val create = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "owned-editor-post",
         "title" -> "Owned Editor Post",
         "content" -> "<article><p>Original</p></article>"
@@ -307,7 +307,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val created = _record(_success(component.logic.executeAction(create, summon[ExecutionContext])))
       val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
       val otherContext = _with_authenticated_principal(baseContext, "editor-other", Map("authorAccountId" -> otherId.value))
-      val update = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val update = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "id" -> postId,
         "slug" -> "owned-editor-post",
         "title" -> "Hijacked",
@@ -343,14 +343,14 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         contentType = ContentType.IMAGE_PNG,
         payload = Bag.binary("valid".getBytes(java.nio.charset.StandardCharsets.UTF_8))
       ))
-      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val create = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "editor-invalid-blob",
         "title" -> "Editor Invalid Blob",
         "content" -> s"""<article><p>Original</p><img src="/web/blob/content/${validBlob.value}" alt=""></article>"""
       ))
       val created = _record(_success(component.logic.executeAction(create, summon[ExecutionContext])))
       val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
-      val update = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val update = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "id" -> postId,
         "slug" -> "editor-invalid-blob",
         "title" -> "Should Not Save",
@@ -387,7 +387,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         contentType = ContentType.IMAGE_PNG,
         payload = Bag.binary("duplicate".getBytes(java.nio.charset.StandardCharsets.UTF_8))
       ))
-      val create = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val create = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "editor-duplicate-inline",
         "title" -> "Editor Duplicate Inline",
         "content" -> s"""<article><img src="/web/blob/content/${blobId.value}" alt=""><p>Again</p><img src="/web/blob/content/${blobId.value}" alt=""></article>"""
@@ -410,12 +410,12 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         component.logic.executionContext(),
         CommandExecutionMode.SyncJob
       )
-      val save = SaveEditorPostCommand(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+      val save = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "anonymous-editor",
         "title" -> "Anonymous",
         "content" -> "<article><p>Body</p></article>"
       ))
-      val list = ListImageBlobsQuery(Request.of("blog", "blog", "listImageBlobs"), Record.empty)
+      val list = ListBlogImageBlobs.unsafeForTest(Request.of("blog", "blog", "listImageBlobs"), Record.empty)
 
       component.logic.executeAction(save, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
       component.logic.executeAction(list, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
@@ -449,7 +449,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         contentType = ContentType.APPLICATION_ZIP,
         payload = Bag.binary(_zip(Vector("index.html" -> "<html></html>")))
       ))
-      val action = ListImageBlobsQuery(Request.of("blog", "blog", "listImageBlobs"), Record.dataAuto(
+      val action = ListBlogImageBlobs.unsafeForTest(Request.of("blog", "blog", "listImageBlobs"), Record.dataAuto(
         "text" -> "picker",
         "limit" -> 10
       ))
@@ -491,7 +491,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         contentType = ContentType.parse("image/jpeg"),
         payload = Bag.binary("primary".getBytes(java.nio.charset.StandardCharsets.UTF_8))
       ))
-      val action = RegisterPostCommand(
+      val action = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "association-primary",
@@ -526,7 +526,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         component.logic.executionContext(),
         CommandExecutionMode.SyncJob
       )
-      val action = RegisterPostCommand(
+      val action = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "existing-image-id",
@@ -557,7 +557,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         CommandExecutionMode.SyncJob
       )
       val request = Request.of("blog", "blog", "registerPost")
-      val action = RegisterPostCommand(request, Record.dataAuto(
+      val action = RegisterBlogPost.unsafeForTest(request, Record.dataAuto(
         "slug" -> "path-only",
         "title" -> "Path Only",
         "content" -> "<article><img src=\"images/inline.png\"></article>",
@@ -597,7 +597,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           payload = Bag.binary(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         ))
       }
-      val register = RegisterPostCommand(
+      val register = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "lifecycle-association",
@@ -613,7 +613,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       val registered = _record(_success(component.logic.executeAction(register, summon[ExecutionContext])))
       val postId = registered.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
-      val get = GetPostQuery(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
+      val get = GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
 
       component.logic.executeAction(get, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
 
@@ -621,7 +621,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         _with_privilege(summon[ExecutionContext], SecurityContext.Privilege.ApplicationContentManager),
         CommandExecutionMode.SyncJob
       )
-      val publish = PublishPostCommand(Request.of("blog", "blog", "publishPost"), Record.dataAuto(
+      val publish = PublishBlogPost.unsafeForTest(Request.of("blog", "blog", "publishPost"), Record.dataAuto(
         "id" -> postId,
         "publisherAccountId" -> authorId
       ))
@@ -630,11 +630,11 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
       published.getAsC[EntityId]("representativeBlobId").toOption.flatten shouldBe Some(coverBlobId)
       published.getAny("primaryImageId") shouldBe None
-      val search = SearchPostsQuery(Request.of("blog", "blog", "searchPosts"), Record.dataAuto("draftStatus" -> "draft"))
+      val search = SearchBlogPosts.unsafeForTest(Request.of("blog", "blog", "searchPosts"), Record.dataAuto("draftStatus" -> "draft"))
       val hiddenSearch = _record(_success(component.logic.executeAction(search, summon[ExecutionContext])))
       hiddenSearch.getInt("fetchedCount") shouldBe Some(0)
 
-      val deactivate = DeactivatePostCommand(Request.of("blog", "blog", "deactivatePost"), Record.dataAuto(
+      val deactivate = DeactivateBlogPost.unsafeForTest(Request.of("blog", "blog", "deactivatePost"), Record.dataAuto(
         "id" -> postId,
         "operatorAccountId" -> authorId
       ))
@@ -665,7 +665,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           payload = Bag.binary(body.getBytes(java.nio.charset.StandardCharsets.UTF_8))
         ))
       }
-      val register = RegisterPostCommand(
+      val register = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "inline-representative",
@@ -681,7 +681,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       val registered = _record(_success(component.logic.executeAction(register, summon[ExecutionContext])))
       val postId = registered.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
-      val get = GetPostQuery(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
+      val get = GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
 
       val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
 
@@ -717,7 +717,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           urlSource = BlobAccessUrlSource.Backend
         )
       )))
-      val register = RegisterPostCommand(
+      val register = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "external-representative",
@@ -732,7 +732,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       val registered = _record(_success(component.logic.executeAction(register, summon[ExecutionContext])))
       val postId = registered.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
-      val get = GetPostQuery(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
+      val get = GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId))
 
       val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
 
@@ -751,7 +751,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       val authorId = EntityId("textus", "author_search", EntityCollectionId("textus", "account", "account"))
       val needle = "BI02 Search Needle"
-      val draft = RegisterPostCommand(
+      val draft = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "bi02-search-draft",
@@ -761,7 +761,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "publish" -> false
         )
       )
-      val published = RegisterPostCommand(
+      val published = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "bi02-search-published",
@@ -773,7 +773,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       _success(component.logic.executeAction(draft, summon[ExecutionContext]))
       _success(component.logic.executeAction(published, summon[ExecutionContext]))
-      val search = SearchPostsQuery(
+      val search = SearchBlogPosts.unsafeForTest(
         Request.of("blog", "blog", "searchPosts"),
         Record.dataAuto(
           "text" -> needle,
@@ -801,7 +801,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       val authorId = EntityId("textus", "author_atom_feed", EntityCollectionId("textus", "account", "account"))
       val marker = "Atom Feed Needle"
-      val draft = RegisterPostCommand(
+      val draft = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "atom-feed-draft",
@@ -811,7 +811,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "publish" -> false
         )
       )
-      val published = RegisterPostCommand(
+      val published = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
         Record.dataAuto(
           "slug" -> "atom-feed-published",
@@ -826,7 +826,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val request = Request.of("blog", "blog", "atomFeed").copy(
         properties = List(Property("cncf.site.base-url", "https://blog.example.test", None))
       )
-      val action = AtomFeedQuery(
+      val action = AtomFeedBlogPosts.unsafeForTest(
         request,
         Record.dataAuto(
           "text" -> marker,

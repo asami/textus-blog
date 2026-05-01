@@ -2,3 +2,6 @@ target/
 .bsp/
 .metals/
 .scala-build/
+.cache/
+.textus.conf
+repository.d/

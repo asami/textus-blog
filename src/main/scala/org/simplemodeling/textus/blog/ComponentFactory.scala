@@ -85,55 +85,55 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
     override def createImportPostTreeActionCall(
       core: ActionCall.Core,
-      action: ImportPostTreeCommand
+      action: ImportPostTree
     ): ImportPostTreeActionCall =
       ImportPostTreeActionCallImpl(core, action)
 
     override def createRegisterPostActionCall(
       core: ActionCall.Core,
-      action: RegisterPostCommand
+      action: RegisterBlogPost
     ): RegisterPostActionCall =
       RegisterPostActionCallImpl(core, action)
 
     override def createSaveEditorPostActionCall(
       core: ActionCall.Core,
-      action: SaveEditorPostCommand
+      action: SaveEditorBlogPost
     ): SaveEditorPostActionCall =
       SaveEditorPostActionCallImpl(core, action)
 
     override def createGetPostActionCall(
       core: ActionCall.Core,
-      action: GetPostQuery
+      action: GetBlogPost
     ): GetPostActionCall =
       GetPostActionCallImpl(core, action)
 
     override def createSearchPostsActionCall(
       core: ActionCall.Core,
-      action: SearchPostsQuery
+      action: SearchBlogPosts
     ): SearchPostsActionCall =
       SearchPostsActionCallImpl(core, action)
 
     override def createAtomFeedActionCall(
       core: ActionCall.Core,
-      action: AtomFeedQuery
+      action: AtomFeedBlogPosts
     ): AtomFeedActionCall =
       AtomFeedActionCallImpl(core, action)
 
     override def createListImageBlobsActionCall(
       core: ActionCall.Core,
-      action: ListImageBlobsQuery
+      action: ListBlogImageBlobs
     ): ListImageBlobsActionCall =
       ListImageBlobsActionCallImpl(core, action)
 
     override def createPublishPostActionCall(
       core: ActionCall.Core,
-      action: PublishPostCommand
+      action: PublishBlogPost
     ): PublishPostActionCall =
       PublishPostActionCallImpl(core, action)
 
     override def createDeactivatePostActionCall(
       core: ActionCall.Core,
-      action: DeactivatePostCommand
+      action: DeactivateBlogPost
     ): DeactivatePostActionCall =
       DeactivatePostActionCallImpl(core, action)
   }
@@ -146,7 +146,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class ImportPostTreeActionCallImpl(
     core: ActionCall.Core,
-    override val action: ImportPostTreeCommand
+    override val action: ImportPostTree
   ) extends ImportPostTreeActionCall with BlogRegistrationActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
@@ -166,7 +166,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class RegisterPostActionCallImpl(
     core: ActionCall.Core,
-    override val action: RegisterPostCommand
+    override val action: RegisterBlogPost
   ) extends RegisterPostActionCall with BlogRegistrationActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       _register(action.record, None)
@@ -174,7 +174,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class SaveEditorPostActionCallImpl(
     core: ActionCall.Core,
-    override val action: SaveEditorPostCommand
+    override val action: SaveEditorBlogPost
   ) extends SaveEditorPostActionCall with BlogRegistrationActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       _save_editor_post(action.record)
@@ -182,7 +182,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class GetPostActionCallImpl(
     core: ActionCall.Core,
-    override val action: GetPostQuery
+    override val action: GetBlogPost
   ) extends GetPostActionCall with BlogReadActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
@@ -195,7 +195,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class SearchPostsActionCallImpl(
     core: ActionCall.Core,
-    override val action: SearchPostsQuery
+    override val action: SearchBlogPosts
   ) extends SearchPostsActionCall with BlogReadActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] = {
       val storeQuery = Query.plan(Record.empty)
@@ -220,7 +220,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class AtomFeedActionCallImpl(
     core: ActionCall.Core,
-    override val action: AtomFeedQuery
+    override val action: AtomFeedBlogPosts
   ) extends AtomFeedActionCall with BlogReadActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] = {
       val storeQuery = Query.plan(Record.empty)
@@ -251,7 +251,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class ListImageBlobsActionCallImpl(
     core: ActionCall.Core,
-    override val action: ListImageBlobsQuery
+    override val action: ListBlogImageBlobs
   ) extends ListImageBlobsActionCall with BlogRegistrationActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
@@ -262,7 +262,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class PublishPostActionCallImpl(
     core: ActionCall.Core,
-    override val action: PublishPostCommand
+    override val action: PublishBlogPost
   ) extends PublishPostActionCall with BlogLifecycleActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
@@ -275,7 +275,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private final case class DeactivatePostActionCallImpl(
     core: ActionCall.Core,
-    override val action: DeactivatePostCommand
+    override val action: DeactivateBlogPost
   ) extends DeactivatePostActionCall with BlogLifecycleActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
@@ -302,11 +302,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       saved <- id match {
         case Some(postId) =>
           for {
-            post <- entity_load[BlogPost](postId)
+            post <- _load_blog_post_direct(postId)
             _ <- exec_from(_assert_editor_author(post, author))
             updated = post.copy(
               id = postId,
-              nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withTitle(title).build(),
+              nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withName(_safe_id(slug, BlogPost.collectionId)).withTitle(title).build(),
               descriptiveAttributes = org.simplemodeling.model.value.DescriptiveAttributes.Builder(post.descriptiveAttributes).withContent(content).build(),
               slug = slug,
               draftStatus = (if (publish) "published" else "draft"),
@@ -319,6 +319,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             post <- exec_from(BlogPostCreate.createC(
               Record.dataAuto(
                 "id" -> _id(BlogPost.collectionId, slug),
+                "name" -> _safe_id(slug, BlogPost.collectionId),
                 "slug" -> slug,
                 "title" -> title,
                 "content" -> content,
@@ -392,6 +393,16 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       given org.goldenport.cncf.context.ExecutionContext = executionContext
       EntityStore.standard().save(post)
     }
+
+  private def _load_blog_post_direct(id: EntityId): ExecUowM[BlogPost] =
+    ConsequenceT
+      .liftF(Free.liftF[UnitOfWorkOp, Option[BlogPost]](UnitOfWorkOp.EntityStoreLoadDirect(
+        id,
+        summon[EntityPersistent[BlogPost]]
+      )))
+      .flatMap { value =>
+        exec_from(value.map(Consequence.success).getOrElse(Consequence.entityNotFound(s"blog post not found: ${id.value}")))
+      }
 
   private def _create_entity_images(
     postId: EntityId,
@@ -572,6 +583,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       post <- BlogPostCreate.createC(
         record ++ Record.dataAuto(
           "id" -> record.getAny("id").getOrElse(_id(BlogPost.collectionId, s)),
+          "name" -> _safe_id(s, BlogPost.collectionId),
           "slug" -> s,
           "title" -> t,
           "content" -> c,
@@ -870,9 +882,16 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   private def _boolean(record: Record, names: String*): Option[Boolean] =
     names.iterator.flatMap(record.getAny).flatMap {
       case b: java.lang.Boolean => Some(b.booleanValue)
-      case s: String => scala.util.Try(s.trim.toBoolean).toOption
-      case other => scala.util.Try(other.toString.trim.toBoolean).toOption
+      case s: String => _boolean_string(s)
+      case other => _boolean_string(other.toString)
     }.nextOption()
+
+  private def _boolean_string(value: String): Option[Boolean] =
+    value.trim.toLowerCase(java.util.Locale.ROOT) match {
+      case "true" | "on" | "yes" | "1" => Some(true)
+      case "false" | "off" | "no" | "0" => Some(false)
+      case other => scala.util.Try(other.toBoolean).toOption
+    }
 
   private def _int(record: Record, names: String*): Option[Int] =
     names.iterator.flatMap(record.getAny).flatMap {
