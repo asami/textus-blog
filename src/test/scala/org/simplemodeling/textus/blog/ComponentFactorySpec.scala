@@ -25,7 +25,7 @@ import org.simplemodeling.textus.blog.entity.BlogPost
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  3, 2026
+ * @version May.  4, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactorySpec extends AnyWordSpec with Matchers {
@@ -260,7 +260,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       created.getString("entity_id") shouldBe Some(postId.value)
       created.getInt("inlineImageCount") shouldBe Some(1)
-      _associations(postId).map(_.targetEntityId) should contain (firstBlob.value)
+      val createdStored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("created post missing"))
+      val firstImageId = createdStored.contentAttributes.references.head.targetEntityId.getOrElse(fail("created image reference missing"))
+      _associations(postId).map(_.targetEntityId) should contain (firstImageId)
 
       val update = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "id" -> postId,
@@ -275,9 +277,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val updatedStored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("updated post missing"))
       updatedStored.lifecycleAttributes.postStatus shouldBe PostStatus.Published
       val associations = _associations(postId)
-      associations.map(_.targetEntityId) should contain (secondBlob.value)
-      associations.map(_.targetEntityId) should not contain firstBlob.value
-      updatedStored.contentAttributes.references.map(_.targetEntityId).flatten shouldBe Vector(secondBlob.value)
+      val secondImageId = updatedStored.contentAttributes.references.head.targetEntityId.getOrElse(fail("updated image reference missing"))
+      associations.map(_.targetEntityId) should contain (secondImageId)
+      associations.map(_.targetEntityId) should not contain firstImageId
+      updatedStored.contentAttributes.references.map(_.targetEntityId).flatten shouldBe Vector(secondImageId)
       updatedStored.contentAttributes.references.map(_.originalRef).flatten shouldBe Vector(s"/web/blob/content/${secondBlob.value}")
       val visible = _record(_success(component.logic.executeAction(
         GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId)),
@@ -480,8 +483,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
       stored.toRecord().getString("title") shouldBe Some("Editor Invalid Blob")
       stored.lifecycleAttributes.postStatus shouldBe PostStatus.Draft
-      _associations(postId).map(_.targetEntityId) should contain (validBlob.value)
-      stored.contentAttributes.references.map(_.targetEntityId).flatten shouldBe Vector(validBlob.value)
+      val validImageId = stored.contentAttributes.references.head.targetEntityId.getOrElse(fail("valid image reference missing"))
+      _associations(postId).map(_.targetEntityId) should contain (validImageId)
+      stored.contentAttributes.references.map(_.targetEntityId).flatten shouldBe Vector(validImageId)
       stored.contentAttributes.references.map(_.originalRef).flatten shouldBe Vector(s"/web/blob/content/${validBlob.value}")
     }
 
@@ -516,8 +520,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       created.getInt("inlineImageCount") shouldBe Some(2)
       val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
       val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
-      stored.contentAttributes.references.map(_.targetEntityId).flatten shouldBe Vector(blobId.value, blobId.value)
-      _associations(postId).filter(_.targetEntityId == blobId.value).map(_.role) shouldBe Vector("inline")
+      val imageIds = stored.contentAttributes.references.map(_.targetEntityId).flatten
+      imageIds.distinct.size shouldBe 1
+      _associations(postId).filter(_.targetEntityId == imageIds.head).map(_.role) shouldBe Vector("inline")
     }
 
     "reject anonymous editor save and image listing" in {
@@ -1084,15 +1089,27 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
   }
 
   private def _associations(postId: EntityId)(using ExecutionContext) =
-    _success(
-      AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault).list(
-        AssociationFilter(
-          domain = AssociationDomain.BlobAttachment,
-          sourceEntityId = Some(postId.value),
-          targetKind = Some("blob")
+    {
+      val blobs = _success(
+        AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault).list(
+          AssociationFilter(
+            domain = AssociationDomain.BlobAttachment,
+            sourceEntityId = Some(postId.value),
+            targetKind = Some("blob")
+          )
         )
       )
-    )
+      val media = _success(
+        AssociationRepository.entityStore(AssociationStoragePolicy.mediaAttachmentDefault).list(
+          AssociationFilter(
+            domain = AssociationDomain.MediaAttachment,
+            sourceEntityId = Some(postId.value),
+            targetKind = Some("image")
+          )
+        )
+      )
+      blobs ++ media
+    }
 
   private def _normalize_blog_post_id(id: EntityId): EntityId =
     val collection = EntityCollectionId(id.major, id.minor, BlogPost.collectionId.name)

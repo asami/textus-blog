@@ -41,7 +41,7 @@ import org.goldenport.cncf.blob.BlobRepository.given
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  3, 2026
+ * @version May.  4, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactory
@@ -721,11 +721,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private def _delete_existing_inline_associations(postId: EntityId): ExecUowM[Unit] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext
-    val repository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+    val repository = AssociationRepository.entityStore(AssociationStoragePolicy.mediaAttachmentDefault)
     exec_from(repository.list(AssociationFilter(
-      domain = AssociationDomain.BlobAttachment,
+      domain = AssociationDomain.MediaAttachment,
       sourceEntityId = Some(_association_source_id(postId)),
-      targetKind = Some("blob"),
+      targetKind = Some("image"),
       role = Some("inline")
     ))).flatMap { associations =>
       associations.foldLeft(exec_pure(())) {
@@ -737,15 +737,25 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private def _delete_existing_blob_associations(postId: EntityId): ExecUowM[Unit] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext
-    val repository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
-    exec_from(repository.list(AssociationFilter(
+    val blobRepository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+    val mediaRepository = AssociationRepository.entityStore(AssociationStoragePolicy.mediaAttachmentDefault)
+    val blobAssociations = blobRepository.list(AssociationFilter(
       domain = AssociationDomain.BlobAttachment,
       sourceEntityId = Some(_association_source_id(postId)),
       targetKind = Some("blob")
-    ))).flatMap { associations =>
-      associations.foldLeft(exec_pure(())) {
-        case (z, association) =>
-          z.flatMap(_ => exec_from(_delete_association_if_present(repository, association)))
+    ))
+    val mediaAssociations = mediaRepository.list(AssociationFilter(
+      domain = AssociationDomain.MediaAttachment,
+      sourceEntityId = Some(_association_source_id(postId)),
+      targetKind = Some("image")
+    ))
+    exec_from(blobAssociations).flatMap { blobValues =>
+      exec_from(mediaAssociations).flatMap { mediaValues =>
+        val associations = blobValues.map(blobRepository -> _) ++ mediaValues.map(mediaRepository -> _)
+        associations.foldLeft(exec_pure(())) {
+          case (z, (repository, association)) =>
+            z.flatMap(_ => exec_from(_delete_association_if_present(repository, association)))
+        }
       }
     }
   }
@@ -1507,12 +1517,19 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
     private def _image_projection(postId: EntityId): Consequence[BlobProjectionResult] = {
       given org.goldenport.cncf.context.ExecutionContext = executionContext
-      val associations = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+      val blobAssociations = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+      val mediaAssociations = AssociationRepository.entityStore(AssociationStoragePolicy.mediaAttachmentDefault)
       val blobs = BlobRepository.entityStore()
+      val media = MediaRepository.entityStore()
       BlobProjection.entityImageProjection(postId.value)(
         BlobProjection.Loaders(
-          listAssociations = filter => associations.list(filter),
-          loadBlob = id => blobs.get(id)
+          listAssociations = filter =>
+            filter.domain match {
+              case AssociationDomain.MediaAttachment => mediaAssociations.list(filter)
+              case _ => blobAssociations.list(filter)
+            },
+          loadBlob = id => blobs.get(id),
+          loadMedia = id => media.get(MediaKind.Image, id)
         )
       )
     }
