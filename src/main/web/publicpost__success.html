@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blog Post</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body>
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+        <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+        <nav class="d-flex align-items-center gap-3">
+          <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
+          <a class="nav-link" href="/web/blog/userblogs">My posts</a>
+        </nav>
+      </div>
+    </header>
+    <main class="container py-4">
+      <article class="blog-article">
+        <textus:record-card source="result.body" title="title" subtitle="slug" columns="updated_at:Updated"></textus:record-card>
+        <textus:html-field source="result.body" field="content" class="article-body mt-4"></textus:html-field>
+      </article>
+    </main>
+  </body>
+</html>

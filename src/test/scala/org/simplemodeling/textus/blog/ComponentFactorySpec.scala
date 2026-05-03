@@ -10,7 +10,7 @@ import org.goldenport.bag.Bag
 import org.goldenport.cncf.association.{AssociationDomain, AssociationFilter, AssociationRepository, AssociationStoragePolicy}
 import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{ComponentCreate, ComponentOrigin}
-import org.goldenport.cncf.context.{ExecutionContext, SecurityContext}
+import org.goldenport.cncf.context.{ExecutionContext, IdGenerationContext, SecurityContext}
 import org.goldenport.cncf.entity.EntityStore
 import org.goldenport.cncf.operation.{CmlEntityRelationshipDefinition, CmlOperationAssociationBinding}
 import org.goldenport.cncf.subsystem.DefaultSubsystemFactory
@@ -19,12 +19,13 @@ import org.goldenport.protocol.{Property, Request}
 import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
+import org.simplemodeling.model.statemachine.PostStatus
 import org.simplemodeling.textus.blog.entity.{BlogInlineImage, BlogPost}
 
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  1, 2026
+ * @version May.  3, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactorySpec extends AnyWordSpec with Matchers {
@@ -93,6 +94,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       definitions("listImageBlobs").inputType shouldBe "ListBlogImageBlobs"
       definitions("getMyPost").inputType shouldBe "GetMyBlogPost"
       definitions("searchMyPosts").inputType shouldBe "SearchMyBlogPosts"
+      definitions("getPost").visibility shouldBe Some("public")
+      definitions("searchPosts").visibility shouldBe Some("public")
+      definitions("getMyPost").visibility shouldBe Some("owner")
+      definitions("searchMyPosts").visibility shouldBe Some("owner")
       definitions("importPostTree").parameters.find(_.name == "fileBundle").map(_.datatype) shouldBe Some("filebundle")
     }
 
@@ -141,9 +146,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "archive_author"
       )
       val archiveId = EntityId("cncf", "blog_archive_1", BlobRepository.CollectionId)
       val archive = _zip(Vector(
@@ -169,11 +174,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         contentType = ContentType.APPLICATION_OCTET_STREAM,
         payload = Bag.binary(archive)
       ))
-      val authorId = EntityId("textus", "author_1", EntityCollectionId("textus", "account", "account"))
       val request = Request.of("blog", "blog", "importPostTree")
       val action = ImportPostTree.unsafeForTest(request, Record.dataAuto(
         "archiveBlobId" -> archiveId,
-        "authorAccountId" -> authorId,
         "publish" -> true
       ))
 
@@ -205,7 +208,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         CommandExecutionMode.SyncJob
       )
       val authorId = EntityId("textus", "author_filebundle", EntityCollectionId("textus", "account", "account"))
-      given ExecutionContext = _with_authenticated_principal(baseContext, "filebundle-author", Map("authorAccountId" -> authorId.value))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "filebundle_author", Map("authorAccountId" -> authorId.value))
       val archive = _zip(Vector(
         "META-INF/blog.yaml" ->
           """slug: filebundle-post
@@ -228,7 +231,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       response.getInt("inlineImageCount") shouldBe Some(1)
       val postId = response.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
       val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
-      stored.authorAccountId.value shouldBe authorId.value
+      stored.securityAttributes.ownerId.id.value shouldBe "filebundle_author"
       _associations(postId).map(_.role) should contain ("inline")
     }
 
@@ -242,7 +245,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         CommandExecutionMode.SyncJob
       )
       val authorId = EntityId("textus", "author_editor", EntityCollectionId("textus", "account", "account"))
-      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-author", Map("authorAccountId" -> authorId.value))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor_author", Map("authorAccountId" -> authorId.value))
       val firstBlob = EntityId("cncf", "editor_inline_first", BlobRepository.CollectionId)
       val secondBlob = EntityId("cncf", "editor_inline_second", BlobRepository.CollectionId)
       Vector(firstBlob -> "first", secondBlob -> "second").foreach { case (id, body) =>
@@ -279,16 +282,70 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       updated.getInt("inlineImageCount") shouldBe Some(1)
       val updatedStored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("updated post missing"))
-      updatedStored.draftStatus shouldBe "published"
+      updatedStored.lifecycleAttributes.postStatus shouldBe PostStatus.Published
       val associations = _associations(postId)
       associations.map(_.targetEntityId) should contain (secondBlob.value)
       associations.map(_.targetEntityId) should not contain firstBlob.value
-      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(secondBlob.display)
+      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(s"/web/blob/content/${secondBlob.value}")
       val visible = _record(_success(component.logic.executeAction(
         GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId)),
         summon[ExecutionContext]
       )))
       visible.getString("title") shouldBe Some("Editor Post Updated")
+    }
+
+    "generate unique editor slugs from titles when slug is omitted" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      val baseContext = _with_deterministic_id_generation(ExecutionContext.withFrameworkCommandExecutionMode(
+        component.logic.executionContext(),
+        CommandExecutionMode.SyncJob
+      ))
+      val authorId = EntityId("textus", "author_slug_editor", EntityCollectionId("textus", "account", "account"))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "slug_author", Map("authorAccountId" -> authorId.value))
+
+      val first = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "title" -> "SEO Slug Title",
+        "content" -> "<article><p>First</p></article>"
+      ))
+      val second = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "title" -> "SEO Slug Title",
+        "content" -> "<article><p>Second</p></article>"
+      ))
+
+      val firstRecord = _record(_success(component.logic.executeAction(first, summon[ExecutionContext])))
+      val secondRecord = _record(_success(component.logic.executeAction(second, summon[ExecutionContext])))
+      val firstId = firstRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("first id missing"))
+      val secondId = secondRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("second id missing"))
+      val firstPost = _success(EntityStore.standard().load[BlogPost](firstId)).getOrElse(fail("first post missing"))
+      val secondPost = _success(EntityStore.standard().load[BlogPost](secondId)).getOrElse(fail("second post missing"))
+
+      firstId.major shouldBe summon[ExecutionContext].major
+      firstId.minor shouldBe summon[ExecutionContext].minor
+      firstPost.toRecord().getString("name") shouldBe Some("seo-slug-title")
+      secondPost.toRecord().getString("name") shouldBe Some("seo-slug-title-2")
+      firstRecord.getString("shortid") shouldBe Some(firstId.parts.entropy)
+      secondRecord.getString("shortid") shouldBe Some(secondId.parts.entropy)
+      firstId.parts.entropy shouldBe "blogslug_000001"
+      secondId.parts.entropy shouldBe "blogslug_000002"
+
+      val update = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "id" -> firstId.parts.entropy,
+        "title" -> "Changed Title",
+        "content" -> "<article><p>Updated</p></article>"
+      ))
+      _success(component.logic.executeAction(update, summon[ExecutionContext]))
+      val updated = _success(EntityStore.standard().load[BlogPost](firstId)).getOrElse(fail("updated post missing"))
+      updated.toRecord().getString("name") shouldBe Some("seo-slug-title")
+
+      val visibleByShortid = _record(_success(component.logic.executeAction(
+        GetMyBlogPost.unsafeForTest(Request.of("blog", "blog", "getMyPost"), Record.dataAuto("id" -> firstId.parts.entropy)),
+        summon[ExecutionContext]
+      )))
+      visibleByShortid.getString("shortid") shouldBe Some(firstId.parts.entropy)
+      visibleByShortid.getString("entity_id") shouldBe Some(firstId.value)
     }
 
     "search and load only the current author's posts for the author dashboard" in {
@@ -300,9 +357,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         component.logic.executionContext(),
         CommandExecutionMode.SyncJob
       )
-      val authorId = EntityId("textus", "author_my_posts", EntityCollectionId("textus", "account", "account"))
-      val otherId = EntityId("textus", "author_other_posts", EntityCollectionId("textus", "account", "account"))
-      given ExecutionContext = _with_authenticated_principal(baseContext, "my-posts-author", Map("authorAccountId" -> authorId.value))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "my_posts_author")
       val mineDraft = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "my-post-draft",
         "title" -> "My Dashboard Needle Draft",
@@ -316,7 +371,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       ))
       val myDraftRecord = _record(_success(component.logic.executeAction(mineDraft, summon[ExecutionContext])))
       val myPublishedRecord = _record(_success(component.logic.executeAction(minePublished, summon[ExecutionContext])))
-      val otherContext = _with_authenticated_principal(baseContext, "other-posts-author", Map("authorAccountId" -> otherId.value))
+      val otherContext = _with_authenticated_principal(baseContext, "other_posts_author")
       val other = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "other-post-draft",
         "title" -> "My Dashboard Needle Other",
@@ -333,7 +388,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       result.getInt("totalCount") shouldBe Some(2)
       val rows = _records(result, "data")
       rows.map(_.getString("title").get).toSet shouldBe Set("My Dashboard Needle Draft", "My Dashboard Needle Published")
-      val draftStatuses = rows.map(row => row.getString("draft_status").orElse(row.getString("draftStatus")))
+      val draftStatuses = rows.map(row => row.getString("post_status").orElse(row.getString("postStatus")))
       draftStatuses should contain (Some("draft"))
       draftStatuses should contain (Some("published"))
 
@@ -368,7 +423,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       val authorId = EntityId("textus", "author_editor_owner", EntityCollectionId("textus", "account", "account"))
       val otherId = EntityId("textus", "author_editor_other", EntityCollectionId("textus", "account", "account"))
-      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-owner", Map("authorAccountId" -> authorId.value))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor_owner", Map("authorAccountId" -> authorId.value))
       val create = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "slug" -> "owned-editor-post",
         "title" -> "Owned Editor Post",
@@ -376,7 +431,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       ))
       val created = _record(_success(component.logic.executeAction(create, summon[ExecutionContext])))
       val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
-      val otherContext = _with_authenticated_principal(baseContext, "editor-other", Map("authorAccountId" -> otherId.value))
+      val otherContext = _with_authenticated_principal(baseContext, "editor_other", Map("authorAccountId" -> otherId.value))
       val update = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "id" -> postId,
         "slug" -> "owned-editor-post",
@@ -389,7 +444,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
       stored.toRecord().getString("title") shouldBe Some("Owned Editor Post")
-      stored.draftStatus shouldBe "draft"
+      stored.lifecycleAttributes.postStatus shouldBe PostStatus.Draft
     }
 
     "validate editor inline Blob refs before saving or deleting old inline bindings" in {
@@ -402,7 +457,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         CommandExecutionMode.SyncJob
       )
       val authorId = EntityId("textus", "author_editor_invalid_blob", EntityCollectionId("textus", "account", "account"))
-      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-invalid-blob", Map("authorAccountId" -> authorId.value))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor_invalid_blob", Map("authorAccountId" -> authorId.value))
       val validBlob = EntityId("cncf", "editor_valid_inline", BlobRepository.CollectionId)
       val missingBlob = EntityId("cncf", "editor_missing_inline", BlobRepository.CollectionId)
       _success(BlobPayloadSupport.putManagedPayload(
@@ -414,7 +469,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         payload = Bag.binary("valid".getBytes(java.nio.charset.StandardCharsets.UTF_8))
       ))
       val create = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
-        "slug" -> "editor-invalid-blob",
+        "slug" -> "editor_invalid_blob",
         "title" -> "Editor Invalid Blob",
         "content" -> s"""<article><p>Original</p><img src="/web/blob/content/${validBlob.value}" alt=""></article>"""
       ))
@@ -422,7 +477,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
       val update = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
         "id" -> postId,
-        "slug" -> "editor-invalid-blob",
+        "slug" -> "editor_invalid_blob",
         "title" -> "Should Not Save",
         "content" -> s"""<article><p>Broken</p><img src="/web/blob/content/${missingBlob.value}" alt=""></article>""",
         "publish" -> true
@@ -432,9 +487,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
       stored.toRecord().getString("title") shouldBe Some("Editor Invalid Blob")
-      stored.draftStatus shouldBe "draft"
+      stored.lifecycleAttributes.postStatus shouldBe PostStatus.Draft
       _associations(postId).map(_.targetEntityId) should contain (validBlob.value)
-      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(validBlob.display)
+      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(s"/web/blob/content/${validBlob.value}")
     }
 
     "allow the same Blob image to appear in multiple inline occurrences" in {
@@ -447,7 +502,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         CommandExecutionMode.SyncJob
       )
       val authorId = EntityId("textus", "author_editor_duplicate_inline", EntityCollectionId("textus", "account", "account"))
-      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-duplicate-inline", Map("authorAccountId" -> authorId.value))
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor_duplicate_inline", Map("authorAccountId" -> authorId.value))
       val blobId = EntityId("cncf", "editor_duplicate_inline_blob", BlobRepository.CollectionId)
       _success(BlobPayloadSupport.putManagedPayload(
         component = component,
@@ -458,7 +513,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         payload = Bag.binary("duplicate".getBytes(java.nio.charset.StandardCharsets.UTF_8))
       ))
       val create = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
-        "slug" -> "editor-duplicate-inline",
+        "slug" -> "editor_duplicate_inline",
         "title" -> "Editor Duplicate Inline",
         "content" -> s"""<article><img src="/web/blob/content/${blobId.value}" alt=""><p>Again</p><img src="/web/blob/content/${blobId.value}" alt=""></article>"""
       ))
@@ -467,8 +522,8 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       created.getInt("inlineImageCount") shouldBe Some(2)
       val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
-      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(blobId.display, blobId.display)
-      _associations(postId).filter(_.targetEntityId == blobId.value).map(_.role) shouldBe Vector("inline", "inline")
+      _inline_images(postId).map(_.sourceUrl) shouldBe Vector(s"/web/blob/content/${blobId.value}", s"/web/blob/content/${blobId.value}")
+      _associations(postId).filter(_.targetEntityId == blobId.value).map(_.role) shouldBe Vector("inline")
     }
 
     "reject anonymous editor save and image listing" in {
@@ -500,7 +555,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         component.logic.executionContext(),
         CommandExecutionMode.SyncJob
       )
-      given ExecutionContext = _with_authenticated_principal(baseContext, "editor-picker-user")
+      given ExecutionContext = _with_authenticated_principal(baseContext, "editor_picker_user")
       val imageBlob = EntityId("cncf", "picker_image_blob", BlobRepository.CollectionId)
       val attachmentBlob = EntityId("cncf", "picker_attachment_blob", BlobRepository.CollectionId)
       _success(BlobPayloadSupport.putManagedPayload(
@@ -529,7 +584,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val rows = _records(response, "data")
       rows.map(_.getAsC[EntityId]("id").toOption.flatten) should contain (Some(imageBlob))
       rows.map(_.getAsC[EntityId]("id").toOption.flatten) should not contain Some(attachmentBlob)
-      rows.head.getString("url") shouldBe Some(s"/web/blob/content/${imageBlob.value}")
+      rows.head.getString("url") shouldBe Some(s"/web/blob/content/${imageBlob.parts.entropy}")
     }
 
     "place the Blog Web app in CAR metadata and Web app resource roots" in {
@@ -537,34 +592,82 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       java.nio.file.Files.exists(root.resolve("src/main/car/web/web.yaml")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/web.yaml")) shouldBe false
-      java.nio.file.Files.exists(root.resolve("src/main/web/blog/index.html")) shouldBe true
-      java.nio.file.Files.exists(root.resolve("src/main/web/blog-my/index.html")) shouldBe true
-      java.nio.file.Files.exists(root.resolve("src/main/web/blog-edit/index.html")) shouldBe true
-      java.nio.file.Files.exists(root.resolve("src/main/web/blog/assets/blog.css")) shouldBe true
-      java.nio.file.Files.exists(root.resolve("src/main/web/blog/assets/blog.js")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/index.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/publicblogs.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/userblogs.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/new.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/update.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/new__success.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/publicblogs__success.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/publicpost__success.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/userblogs__success.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/userpost__success.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/update__error.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/assets/blog.css")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/assets/blog.js")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog/index.html")) shouldBe false
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog-my/index.html")) shouldBe false
+      java.nio.file.Files.exists(root.resolve("src/main/web/blog-edit/index.html")) shouldBe false
 
       val webYaml = java.nio.file.Files.readString(root.resolve("src/main/car/web/web.yaml"))
-      webYaml should include ("/web/blog/my")
-      webYaml should include ("/web/blog/edit")
+      webYaml should include ("/web/blog")
+      webYaml should not include "blog-my"
+      webYaml should not include "blog-edit"
+      webYaml should include ("blog-component.blog.search-posts:\n    enabled: true\n    stayOnError: true")
+      webYaml should include ("blog-component.blog.search-my-posts:\n    enabled: true\n    stayOnError: true")
       webYaml should include ("blog-component.blog.search-my-posts: protected")
       webYaml should include ("blog-component.blog.get-my-post: protected")
 
-      val publicHtml = java.nio.file.Files.readString(root.resolve("src/main/web/blog/index.html"))
-      publicHtml should include ("returnTo=%2Fweb%2Fblog%2Fmy")
+      val publicHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicblogs.html"))
+      publicHtml should include ("returnTo=%2Fweb%2Fblog%2Fuserblogs")
+      publicHtml should include ("/web/assets/bootstrap.min.css")
+      publicHtml should include ("/web/assets/textus-widgets.css")
+      publicHtml should include ("/form/blog-component/blog/search-posts")
       publicHtml should include ("data-my-posts-link")
+      publicHtml should not include "textus-list"
       publicHtml should not include "data-editor-form"
       publicHtml should not include "data-upload-form"
 
-      val myHtml = java.nio.file.Files.readString(root.resolve("src/main/web/blog-my/index.html"))
+      val myHtml = java.nio.file.Files.readString(root.resolve("src/main/web/userblogs.html"))
       myHtml should include ("data-my-post-list")
       myHtml should include ("data-open-upload-dialog")
       myHtml should include ("data-upload-form")
-      myHtml should include ("/web/blog/edit")
+      myHtml should include ("/web/blog/new")
+      myHtml should include ("/form/blog-component/blog/search-my-posts")
+      myHtml should not include "accept=\".zip,application/zip\""
+      myHtml should not include "textus-list"
 
-      val editHtml = java.nio.file.Files.readString(root.resolve("src/main/web/blog-edit/index.html"))
-      editHtml should include ("data-editor-form")
-      editHtml should include ("data-open-image-picker")
-      editHtml should include ("data-image-dialog")
+      val newHtml = java.nio.file.Files.readString(root.resolve("src/main/web/new.html"))
+      newHtml should include ("data-editor-form")
+      newHtml should include ("textus.form.page")
+      newHtml should include ("value=\"new\"")
+      newHtml should include ("data-open-image-picker")
+      newHtml should include ("data-image-dialog")
+
+      val updateHtml = java.nio.file.Files.readString(root.resolve("src/main/web/update.html"))
+      updateHtml should include ("data-editor-form")
+      updateHtml should include ("value=\"update\"")
+      updateHtml should include ("name=\"id\"")
+      updateHtml should include ("Without JavaScript")
+      val blogJs = java.nio.file.Files.readString(root.resolve("src/main/web/assets/blog.js"))
+      blogJs should not include "addEventListener(\"submit\", saveEditorPost)"
+      blogJs should not include "paths.save"
+
+      val publicResultHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicblogs__success.html"))
+      publicResultHtml should include ("textus:card-list")
+      publicResultHtml should include ("detail-param-textus.form.page=\"publicpost\"")
+      val publicPostHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicpost__success.html"))
+      publicPostHtml should include ("textus:record-card")
+      publicPostHtml should include ("textus:html-field")
+      val userPostHtml = java.nio.file.Files.readString(root.resolve("src/main/web/userpost__success.html"))
+      userPostHtml should include ("/form/blog-component/blog/save-editor-post")
+      userPostHtml should include ("value=\"${result.body.shortid}\"")
+      userPostHtml should include ("name=\"publish\" value=\"${result.body.post_status}\"")
+      userPostHtml should include ("${result.body.content}</textarea>")
+      userPostHtml should not include "update?id=${result.body.entity_id}"
+      publicResultHtml should include ("detail-param-id=\"{shortid}\"")
+      val userResultHtml = java.nio.file.Files.readString(root.resolve("src/main/web/userblogs__success.html"))
+      userResultHtml should include ("detail-param-id=\"{shortid}\"")
     }
 
     "register existing Blob images through BlobAttachment Association" in {
@@ -572,11 +675,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_assoc"
       )
-      val authorId = EntityId("textus", "author_assoc", EntityCollectionId("textus", "account", "account"))
       val blobId = EntityId("cncf", "assoc_primary_blob", BlobRepository.CollectionId)
       _success(BlobPayloadSupport.putManagedPayload(
         component = component,
@@ -592,7 +694,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "association-primary",
           "title" -> "Association Primary",
           "content" -> "<article><p>Body</p></article>",
-          "authorAccountId" -> authorId,
           "publish" -> true,
           "entityImages" -> Vector(Record.dataAuto(
             "existingBlobId" -> blobId,
@@ -617,9 +718,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "existing_image_author"
       )
       val action = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
@@ -627,7 +728,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "existing-image-id",
           "title" -> "Existing Image ID",
           "content" -> "<article><p>Body</p></article>",
-          "authorAccountId" -> EntityId("textus", "author_existing_image", EntityCollectionId("textus", "account", "account")),
           "entityImages" -> Vector(Record.dataAuto(
             "existingImageId" -> EntityId("textus_blog", "legacy_image", EntityCollectionId("textus_blog", "blog_component", "image_asset")),
             "role" -> "primary"
@@ -638,7 +738,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val result = component.logic.executeAction(action, summon[ExecutionContext])
 
       result shouldBe a[Consequence.Failure[_]]
-      val postId = EntityId(BlogPost.collectionId.major, "existing_image_id", BlogPost.collectionId)
+      val postId = EntityId(summon[ExecutionContext].major, summon[ExecutionContext].minor, BlogPost.collectionId, entropy = Some("existing_image_id"))
       _success(EntityStore.standard().load[BlogPost](postId)) shouldBe None
     }
 
@@ -647,16 +747,15 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "path_only_author"
       )
       val request = Request.of("blog", "blog", "registerPost")
       val action = RegisterBlogPost.unsafeForTest(request, Record.dataAuto(
         "slug" -> "path-only",
         "title" -> "Path Only",
         "content" -> "<article><img src=\"images/inline.png\"></article>",
-        "authorAccountId" -> EntityId("textus", "author_2", EntityCollectionId("textus", "account", "account")),
         "inlineImages" -> Vector(Record.dataAuto(
           "path" -> "images/inline.png",
           "sourcePath" -> "images/inline.png"
@@ -666,7 +765,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val result = component.logic.executeAction(action, summon[ExecutionContext])
 
       result shouldBe a[Consequence.Failure[_]]
-      val postId = EntityId(BlogPost.collectionId.major, "path_only", BlogPost.collectionId)
+      val postId = EntityId(summon[ExecutionContext].major, summon[ExecutionContext].minor, BlogPost.collectionId, entropy = Some("path_only"))
       _success(EntityStore.standard().load[BlogPost](postId)) shouldBe None
     }
 
@@ -675,11 +774,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_lifecycle"
       )
-      val authorId = EntityId("textus", "author_lifecycle", EntityCollectionId("textus", "account", "account"))
       val coverBlobId = EntityId("cncf", "lifecycle_cover_blob", BlobRepository.CollectionId)
       val galleryBlobId = EntityId("cncf", "lifecycle_gallery_blob", BlobRepository.CollectionId)
       Vector(coverBlobId -> "cover", galleryBlobId -> "gallery").foreach { case (id, body) =>
@@ -698,7 +796,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "lifecycle-association",
           "title" -> "Lifecycle Association",
           "content" -> "<article><p>Body</p></article>",
-          "authorAccountId" -> authorId,
           "publish" -> false,
           "entityImages" -> Vector(
             Record.dataAuto("existingBlobId" -> galleryBlobId, "role" -> "gallery", "sortOrder" -> 0),
@@ -718,20 +815,20 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       )
       val publish = PublishBlogPost.unsafeForTest(Request.of("blog", "blog", "publishPost"), Record.dataAuto(
         "id" -> postId,
-        "publisherAccountId" -> authorId
+        "publisherAccountId" -> "author_lifecycle"
       ))
       _success(component.logic.executeAction(publish, managerContext))
 
       val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
       published.getAsC[EntityId]("representativeBlobId").toOption.flatten shouldBe Some(coverBlobId)
       published.getAny("primaryImageId") shouldBe None
-      val search = SearchBlogPosts.unsafeForTest(Request.of("blog", "blog", "searchPosts"), Record.dataAuto("draftStatus" -> "draft"))
+      val search = SearchBlogPosts.unsafeForTest(Request.of("blog", "blog", "searchPosts"), Record.dataAuto("text" -> "Lifecycle Association"))
       val hiddenSearch = _record(_success(component.logic.executeAction(search, summon[ExecutionContext])))
-      hiddenSearch.getInt("fetchedCount") shouldBe Some(0)
+      hiddenSearch.getInt("fetchedCount") shouldBe Some(1)
 
       val deactivate = DeactivateBlogPost.unsafeForTest(Request.of("blog", "blog", "deactivatePost"), Record.dataAuto(
         "id" -> postId,
-        "operatorAccountId" -> authorId
+        "operatorAccountId" -> "author_lifecycle"
       ))
       _success(component.logic.executeAction(deactivate, managerContext))
 
@@ -743,11 +840,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_inline_representative"
       )
-      val authorId = EntityId("textus", "author_inline_representative", EntityCollectionId("textus", "account", "account"))
       val inline1 = EntityId("cncf", "inline_representative_1", BlobRepository.CollectionId)
       val inline2 = EntityId("cncf", "inline_representative_2", BlobRepository.CollectionId)
       Vector(inline1 -> "inline-1", inline2 -> "inline-2").foreach { case (id, body) =>
@@ -766,7 +862,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "inline-representative",
           "title" -> "Inline Representative",
           "content" -> "<article><p>Body</p><img src=\"/web/blob/content/inline-1\"><img src=\"/web/blob/content/inline-2\"></article>",
-          "authorAccountId" -> authorId,
           "publish" -> true,
           "inlineImages" -> Vector(
             Record.dataAuto("existingBlobId" -> inline2, "sourcePath" -> "inline-2.png", "sortOrder" -> 2),
@@ -781,7 +876,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
 
       published.getAsC[EntityId]("representativeBlobId").toOption.flatten shouldBe Some(inline1)
-      published.getString("representativeBlobUrl") shouldBe Some(s"/web/blob/content/${inline1.value}")
+      published.getString("representativeBlobUrl") shouldBe Some(s"/web/blob/content/${inline1.parts.entropy}")
     }
 
     "derive representative image URL from Blob metadata accessUrl" in {
@@ -789,11 +884,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_external_representative"
       )
-      val authorId = EntityId("textus", "author_external_representative", EntityCollectionId("textus", "account", "account"))
       val externalBlobId = EntityId("cncf", "external_representative_cover", BlobRepository.CollectionId)
       val externalUrl = "https://example.test/blog/external-cover.png"
       _success(BlobRepository.entityStore().create(BlobCreate(
@@ -818,7 +912,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "external-representative",
           "title" -> "External Representative",
           "content" -> "<article><p>Body</p></article>",
-          "authorAccountId" -> authorId,
           "publish" -> true,
           "entityImages" -> Vector(
             Record.dataAuto("existingBlobId" -> externalBlobId, "role" -> "cover", "sortOrder" -> 1)
@@ -840,11 +933,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_search"
       )
-      val authorId = EntityId("textus", "author_search", EntityCollectionId("textus", "account", "account"))
       val needle = "BI02 Search Needle"
       val draft = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
@@ -852,7 +944,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "bi02-search-draft",
           "title" -> s"$needle Draft",
           "content" -> "<article><p>Draft body</p></article>",
-          "authorAccountId" -> authorId,
           "publish" -> false
         )
       )
@@ -862,7 +953,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "bi02-search-published",
           "title" -> s"$needle Published",
           "content" -> "<article><p>Published body</p></article>",
-          "authorAccountId" -> authorId,
           "publish" -> true
         )
       )
@@ -890,11 +980,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
         .primary
-      given ExecutionContext = ExecutionContext.withFrameworkCommandExecutionMode(
-        component.logic.executionContext(),
-        CommandExecutionMode.SyncJob
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_atom_feed"
       )
-      val authorId = EntityId("textus", "author_atom_feed", EntityCollectionId("textus", "account", "account"))
       val marker = "Atom Feed Needle"
       val draft = RegisterBlogPost.unsafeForTest(
         Request.of("blog", "blog", "registerPost"),
@@ -902,7 +991,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "atom-feed-draft",
           "title" -> s"$marker Draft",
           "content" -> "<article><p>Draft body</p></article>",
-          "authorAccountId" -> authorId,
           "publish" -> false
         )
       )
@@ -912,7 +1000,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
           "slug" -> "atom-feed-published",
           "title" -> s"$marker Published",
           "content" -> s"<article><p>$marker Published & Body</p></article>",
-          "authorAccountId" -> authorId,
           "publish" -> true
         )
       )
@@ -952,7 +1039,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault).list(
         AssociationFilter(
           domain = AssociationDomain.BlobAttachment,
-          sourceEntityId = Some(postId.display),
+          sourceEntityId = Some(postId.value),
           targetKind = Some("blob")
         )
       )
@@ -960,14 +1047,33 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
   private def _inline_images(postId: EntityId)(using ExecutionContext): Vector[BlogInlineImage] =
     _success(
-      EntityStore.standard()
-        .search[BlogInlineImage](org.goldenport.cncf.entity.EntityQuery(
-          BlogInlineImage.collectionId,
-          org.goldenport.cncf.directive.Query.plan(Record.empty),
-          org.goldenport.cncf.entity.EntitySearchScope.Store
-        ))
-        .map(_.data.filter(_.blogPostId == postId).sortBy(_.sortOrder))
+      Vector(
+        EntityCollectionId(postId.major, postId.minor, BlogInlineImage.collectionId.name),
+        BlogInlineImage.collectionId
+      ).distinct.foldLeft(Consequence.success(Vector.empty[BlogInlineImage])) {
+        case (z, collection) =>
+          z.flatMap { values =>
+            EntityStore.standard()
+              .search[BlogInlineImage](org.goldenport.cncf.entity.EntityQuery(
+                collection,
+                org.goldenport.cncf.directive.Query.plan(Record.empty),
+                org.goldenport.cncf.entity.EntitySearchScope.Store,
+                visibilityScope = Some(org.goldenport.cncf.entity.EntityVisibilityScope.Owner)
+              ))
+              .map(result => values ++ result.data)
+          }
+      }.map(_.map(_normalize_inline_image).filter(_.blogPostId == _normalize_blog_post_id(postId)).sortBy(_.sortOrder).distinctBy(_.id))
     )
+
+  private def _normalize_inline_image(image: BlogInlineImage): BlogInlineImage =
+    image.copy(blogPostId = _normalize_blog_post_id(image.blogPostId))
+
+  private def _normalize_blog_post_id(id: EntityId): EntityId =
+    val collection = EntityCollectionId(id.major, id.minor, BlogPost.collectionId.name)
+    if (id.collection == collection)
+      id
+    else
+      EntityId(id.major, id.minor, collection, id.timestamp, id.entropy)
 
   private def _record(response: OperationResponse): Record =
     response match {
@@ -1028,6 +1134,15 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       secured.runtime.withUnitOfWorkContext(rebound, "component-factory-spec-authenticated")
     rebound
   }
+
+  private def _with_deterministic_id_generation(
+    context: ExecutionContext,
+    seed: String = "blogslug"
+  ): ExecutionContext =
+    ExecutionContext.withIdGenerationContext(
+      context,
+      IdGenerationContext.deterministic(IdGenerationContext.IdNamespace(context.major, context.minor), seed)
+    )
 
   private def _success[A](value: Consequence[A]): A =
     value match {

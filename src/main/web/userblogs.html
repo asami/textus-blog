@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>My Posts - Blog</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body data-page="my">
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+      <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+      <nav class="d-flex align-items-center gap-3">
+        <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
+        <form action="/web/blog/logout" method="post" data-logout-form hidden>
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
+        </form>
+        <span class="text-secondary small" data-session-name></span>
+      </nav>
+      </div>
+    </header>
+
+    <main class="dashboard-shell">
+      <section class="page-head">
+        <div>
+          <h1>My posts</h1>
+          <p>Drafts, published posts, and inactive posts you authored.</p>
+        </div>
+        <div class="page-actions">
+          <a class="btn btn-primary" href="/web/blog/new">New post</a>
+          <button class="btn btn-outline-primary" type="button" data-open-upload-dialog>Upload</button>
+        </div>
+      </section>
+
+      <form class="search-form dashboard-search" action="/form/blog-component/blog/search-my-posts" method="post" data-search-form>
+        <input type="hidden" name="textus.form.page" value="userblogs">
+        <input type="hidden" name="limit" value="100">
+        <input class="form-control" type="search" name="text" placeholder="Search my posts" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Search</button>
+      </form>
+
+      <div class="post-list dashboard-list" data-my-post-list>
+        <noscript>
+          <p class="post-row-meta">Use the search form to list your posts.</p>
+        </noscript>
+      </div>
+    </main>
+
+    <dialog class="image-dialog" data-upload-dialog>
+      <form method="dialog" class="dialog-head">
+        <strong>Upload post</strong>
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Close</button>
+      </form>
+      <form class="upload-form" action="/form/blog-component/blog/import-post-tree" method="post" enctype="multipart/form-data" data-upload-form>
+        <input type="hidden" name="textus.form.page" value="userblogs">
+        <label>
+          Blog file bundle
+          <input class="form-control" type="file" name="fileBundle" required>
+          <span class="form-text">Choose a ZIP archive or a single article file. Directory upload is supported by CNCF clients and command execution.</span>
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" name="publish">
+          Publish
+        </label>
+        <div class="editor-actions">
+          <button class="btn btn-primary" type="submit">Import</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" data-toast hidden></div>
+    <script src="/web/assets/bootstrap.bundle.min.js"></script>
+    <script src="/web/assets/textus-widgets.js"></script>
+    <script src="/web/blog/assets/blog.js"></script>
+  </body>
+</html>

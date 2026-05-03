@@ -20,7 +20,7 @@ const state = {
 const els = {
   login: document.querySelector("[data-login-link]"),
   signup: document.querySelector("[data-signup-link]"),
-  myPosts: document.querySelector("[data-my-posts-link]"),
+  myPosts: document.querySelectorAll("[data-my-posts-link]"),
   logout: document.querySelector("[data-logout-form]"),
   sessionName: document.querySelector("[data-session-name]"),
   searchForm: document.querySelector("[data-search-form]"),
@@ -28,6 +28,7 @@ const els = {
   myPostList: document.querySelector("[data-my-post-list]"),
   articleTitle: document.querySelector("[data-article-title]"),
   articleBody: document.querySelector("[data-article-body]"),
+  backToList: document.querySelector("[data-back-to-list]"),
   editorForm: document.querySelector("[data-editor-form]"),
   editorHeading: document.querySelector("[data-editor-heading]"),
   editorId: document.querySelector("[data-editor-id]"),
@@ -56,14 +57,12 @@ async function boot() {
     if (!requireAuth()) return;
     bindEditorEvents();
     await loadEditorPost();
-  } else {
+  } else if (state.page === "reader") {
     bindReaderEvents();
     await loadPublicPosts(new URLSearchParams(location.search).get("text") || "");
     const postId = new URLSearchParams(location.search).get("post") || location.hash.replace(/^#post=/, "");
     if (postId) {
       await openPublicPost(postId);
-    } else if (state.posts.length > 0) {
-      await openPublicPost(readId(state.posts[0]));
     }
   }
 }
@@ -100,7 +99,6 @@ function bindDashboardEvents() {
 }
 
 function bindEditorEvents() {
-  els.editorForm?.addEventListener("submit", saveEditorPost);
   document.querySelector("[data-open-image-picker]")?.addEventListener("click", openImagePicker);
 }
 
@@ -114,7 +112,7 @@ async function loadSession() {
   const authenticated = Boolean(state.session?.authenticated);
   if (els.login) els.login.hidden = authenticated;
   if (els.signup) els.signup.hidden = authenticated;
-  if (els.myPosts) els.myPosts.hidden = !authenticated;
+  for (const link of els.myPosts || []) link.hidden = !authenticated;
   if (els.logout) els.logout.hidden = !authenticated;
   if (els.sessionName) els.sessionName.textContent = authenticated ? displayUser() : "";
 }
@@ -152,11 +150,12 @@ function renderPublicPostList() {
     return;
   }
   for (const post of state.posts) {
+    const ref = publicPostRef(post);
     const button = document.createElement("button");
     button.type = "button";
     button.className = "post-row";
-    if (state.currentPost && readId(state.currentPost) === readId(post)) button.classList.add("is-active");
-    button.addEventListener("click", () => openPublicPost(readId(post)));
+    if (state.currentPost && publicPostRef(state.currentPost) === ref) button.classList.add("is-active");
+    button.addEventListener("click", () => openPublicPost(ref));
     button.append(postThumb(post), rowText(post.title || post.slug || readId(post), post.slug || ""));
     els.postList.append(button);
   }
@@ -175,9 +174,9 @@ function renderMyPostList() {
     const body = rowText(post.title || post.slug || readId(post), `${post.slug || ""} ${statusText(post)}`);
     const actions = document.createElement("div");
     actions.className = "post-actions";
-    actions.append(linkButton("Edit", `/web/blog/edit?id=${encodeURIComponent(readId(post))}`));
+    actions.append(linkButton("Edit", `/web/blog/update?id=${encodeURIComponent(editPostRef(post))}`));
     if (isPublicPost(post)) {
-      actions.append(linkButton("View public", `/web/blog?post=${encodeURIComponent(readId(post))}`));
+      actions.append(linkButton("View public", `/web/blog/publicblogs?post=${encodeURIComponent(publicPostRef(post))}`));
     }
     body.append(actions);
     row.append(postThumb(post), body);
@@ -191,10 +190,12 @@ async function openPublicPost(id) {
   form.append("id", id);
   const post = await postForm(paths.get, form);
   state.currentPost = post;
+  document.body.classList.add("reader-detail-mode");
+  if (els.backToList) els.backToList.hidden = false;
   if (els.articleTitle) els.articleTitle.textContent = post.title || post.slug || "";
   if (els.articleBody) els.articleBody.innerHTML = post.content || "";
   renderPublicPostList();
-  history.replaceState(null, "", `/web/blog?post=${encodeURIComponent(id)}`);
+  history.replaceState(null, "", `/web/blog/publicblogs?post=${encodeURIComponent(publicPostRef(post) || id)}`);
 }
 
 async function loadEditorPost() {
@@ -217,24 +218,7 @@ function setEditor(post) {
   if (els.editorTitle) els.editorTitle.value = post?.title || "";
   if (els.editorContent) els.editorContent.value = post?.content || "<article>\n  <p></p>\n</article>";
   if (els.editorDescription) els.editorDescription.value = post?.description || "";
-  if (els.editorPublish) els.editorPublish.checked = post?.draftStatus === "published" || post?.draft_status === "published";
-}
-
-async function saveEditorPost(event) {
-  event.preventDefault();
-  const form = new FormData(els.editorForm);
-  if (!els.editorPublish.checked) form.delete("publish");
-  try {
-    const result = await postForm(paths.save, form);
-    const savedId = result.entity_id || result.id;
-    if (savedId) {
-      els.editorId.value = savedId;
-      history.replaceState(null, "", `/web/blog/edit?id=${encodeURIComponent(savedId)}`);
-    }
-    notice("Saved.");
-  } catch (error) {
-    notice(error.message, true);
-  }
+  if (els.editorPublish) els.editorPublish.checked = post?.postStatus === "published" || post?.post_status === "published";
 }
 
 async function importPostTree(event) {
@@ -373,7 +357,7 @@ function rowText(title, meta) {
 
 function linkButton(label, href) {
   const link = document.createElement("a");
-  link.className = "button-link";
+  link.className = "btn btn-sm btn-outline-primary";
   link.href = href;
   link.textContent = label;
   return link;
@@ -381,20 +365,31 @@ function linkButton(label, href) {
 
 function readId(record) {
   if (!record) return "";
+  if (record.shortid) return String(record.shortid);
+  if (record.shortId) return String(record.shortId);
+  if (record.short_id) return String(record.short_id);
   if (record.entity_id) return String(record.entity_id);
   const id = record.id || record.blobId || "";
   return typeof id === "object" ? id.value || id.display || id.minor || String(id) : String(id);
 }
 
+function publicPostRef(post) {
+  return post?.slug || post?.name || readId(post);
+}
+
+function editPostRef(post) {
+  return post?.shortid || post?.shortId || post?.short_id || readId(post);
+}
+
 function statusText(post) {
-  const draft = post.draftStatus || post.draft_status || "";
-  const active = post.activeStatus || post.active_status || "";
-  return [draft, active].filter(Boolean).join(" / ");
+  const status = post.postStatus || post.post_status || "";
+  const active = post.aliveness || "";
+  return [status, active].filter(Boolean).join(" / ");
 }
 
 function isPublicPost(post) {
-  return (post.draftStatus || post.draft_status) === "published" &&
-    (post.activeStatus || post.active_status) === "active";
+  return (post.postStatus || post.post_status) === "published" &&
+    post.aliveness === "alive";
 }
 
 function displayUser() {

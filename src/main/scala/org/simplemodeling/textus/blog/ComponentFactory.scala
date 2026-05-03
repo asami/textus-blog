@@ -14,17 +14,22 @@ import org.goldenport.cncf.association.{AssociationCreate, AssociationDomain, As
 import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{Component, ComponentCreate}
 import org.goldenport.cncf.directive.{Query, SearchResult}
-import org.goldenport.cncf.entity.{EntityPersistent, EntityQuery, EntitySearchScope, EntityStore}
+import org.goldenport.cncf.entity.{EntityIdentityScope, EntityPersistent, EntityPersistentCreate, EntityQuery, EntitySearchScope, EntityStore, EntityVisibilityScope, SimpleEntityStorageShapePolicy}
 import org.goldenport.cncf.feed.{AtomFeedProjection, AtomFeedRenderer}
+import org.goldenport.cncf.id.TextusUrn
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
 import org.goldenport.cncf.security.SecuritySubject
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
 import org.goldenport.datatype.{ContentType, FileBundle}
+import org.goldenport.datatype.ObjectId
+import org.goldenport.datatype.{I18nText, Name as GpName}
 import org.goldenport.http.{HttpResponse, HttpStatus}
 import org.goldenport.id.UniversalId
 import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
+import org.simplemodeling.model.statemachine.{Aliveness, PostStatus}
+import org.simplemodeling.model.value.{NameAttributes, DescriptiveAttributes, LifecycleAttributes, PublicationAttributes, ResourceAttributes, AuditAttributes, MediaAttributes, ContextualAttributes, SecurityAttributes}
 import org.simplemodeling.textus.blog.entity.{BlogInlineImage, BlogPost}
 import org.simplemodeling.textus.blog.entity.create.{
   BlogInlineImage as BlogInlineImageCreate,
@@ -37,7 +42,7 @@ import org.goldenport.cncf.blob.BlobRepository.given
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  1, 2026
+ * @version May.  3, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactory
@@ -56,6 +61,18 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     BlogServiceFactoryImpl()
 
   private final class BlogRuntimeComponent extends BlogComponentComponent {
+    override def componentDescriptors: Vector[org.goldenport.cncf.component.ComponentDescriptor] =
+      super.componentDescriptors.map { descriptor =>
+        descriptor.copy(entityRuntimeDescriptors = descriptor.entityRuntimeDescriptors.map {
+          case runtime if runtime.entityName == "BlogPost" =>
+            runtime.copy(
+              usageKind = org.goldenport.cncf.security.EntityUsageKind.PublicContent,
+              applicationDomain = org.goldenport.cncf.security.EntityApplicationDomain.Cms
+            )
+          case other => other
+        })
+      }
+
     override def operationDefinitions: Vector[org.goldenport.cncf.operation.CmlOperationDefinition] =
       super.operationDefinitions.map {
         case definition if definition.name == "importPostTree" =>
@@ -167,9 +184,16 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         response <- {
           for {
             draft <- exec_from(BlogFileTreeImportSupport.normalizeTreeWithInlineImageUrls(source.root) { img =>
-              Some(BlobUrl.cncfRoute(_blob_id(img.treePath.getOrElse(img.sourcePath))).displayUrl)
+              Some(img.treePath.getOrElse(img.sourcePath))
             })
-            register = _register_record(sourceRecord, draft)
+            normalized <- blob_normalize_inline_images(
+              InlineImageContent(
+                InlineImageMarkup.HtmlFragment,
+                draft.content,
+                Some(FileBundle.Directory(source.root))
+              )
+            )
+            register = _register_record(sourceRecord, draft, Some(normalized))
             response <- _register(register, Some(source.root))
           } yield response
         }.guarantee(exec_from(_cleanup_import_tree_source(source)))
@@ -198,9 +222,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ) extends GetPostActionCall with BlogReadActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
-        id <- exec_from(_entity_id(action.record, "id"))
-        post <- _load_blog_post(id)
-        _ <- exec_from(_public_visible(post))
+        post <- _load_public_blog_post(action.record, "id")
         record <- exec_from(_public_post_record(post))
       } yield OperationResponse(record)
   }
@@ -211,10 +233,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ) extends GetMyPostActionCall with BlogReadActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
-        author <- exec_from(_current_author_account_id())
-        id <- exec_from(_entity_id(action.record, "id"))
-        post <- _load_blog_post(id)
-        _ <- exec_from(_assert_editor_author(post, author))
+        post <- _load_blog_post(action.record, "id")
         record <- exec_from(_public_post_record(post))
       } yield OperationResponse(record)
   }
@@ -228,7 +247,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val responseQuery = Query.plan(action.record, limit = _int(action.record, "limit"), offset = _int(action.record, "offset"))
       for {
         result <- _search_blog_posts(storeQuery)
-        visible = _filter_public_search(result.data, action.record)
+        visible = _filter_search_text(result.data, action.record)
         page = _page(visible, action.record)
         records <- exec_from(_sequence(page.map(_public_post_record)))
       } yield OperationResponse(
@@ -252,9 +271,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val storeQuery = Query.plan(Record.empty)
       val responseQuery = Query.plan(action.record, limit = _int(action.record, "limit"), offset = _int(action.record, "offset"))
       for {
-        author <- exec_from(_current_author_account_id())
-        result <- _search_blog_posts(storeQuery)
-        visible = _filter_author_search(result.data, action.record, author)
+        result <- _search_my_blog_posts(storeQuery)
+        visible = _filter_search_text(_sort_feed_posts(result.data), action.record)
         page = _page(visible, action.record)
         records <- exec_from(_sequence(page.map(_public_post_record)))
       } yield OperationResponse(
@@ -278,7 +296,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val storeQuery = Query.plan(Record.empty)
       for {
         result <- _search_blog_posts(storeQuery)
-        visible = _filter_public_search(result.data, action.record)
+        visible = _filter_search_text(result.data, action.record)
         page = _page_with_default(_sort_feed_posts(visible), action.record, 20)
         records <- exec_from(_sequence(page.map(_public_post_record)))
         baseUrl <- exec_from(AtomFeedProjection.resolveSiteBaseUrl(request, executionContext.runtime.resolvedParameters))
@@ -318,9 +336,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ) extends PublishPostActionCall with BlogLifecycleActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
-        id <- exec_from(_entity_id(action.record, "id"))
-        post <- entity_load[BlogPost](id)
-        updated = post.copy(id = id, draftStatus = "published")
+        post <- _load_blog_post(action.record, "id")
+        updated <- exec_from(_with_blog_visibility(post, publish = true, active = true))
         _ <- entity_save(updated)
       } yield OperationResponse(updated.toRecord())
   }
@@ -331,57 +348,104 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ) extends DeactivatePostActionCall with BlogLifecycleActionSupport {
     protected def build_Program: ExecUowM[OperationResponse] =
       for {
-        id <- exec_from(_entity_id(action.record, "id"))
-        post <- entity_load[BlogPost](id)
-        updated = post.copy(id = id, activeStatus = "inactive")
+        post <- _load_blog_post(action.record, "id")
+        updated <- exec_from(_with_blog_visibility(post, post.lifecycleAttributes.postStatus, Aliveness.Dead))
         _ <- entity_save(updated)
       } yield OperationResponse(updated.toRecord())
   }
 
+  private def _with_blog_visibility(
+    post: BlogPost,
+    publish: Boolean,
+    active: Boolean
+  ): Consequence[BlogPost] =
+    _with_blog_visibility(
+      post,
+      if (publish) PostStatus.Published else PostStatus.Draft,
+      if (active) Aliveness.Alive else Aliveness.Dead
+    )
+
+  private def _with_blog_visibility(
+    post: BlogPost,
+    postStatus: PostStatus,
+    aliveness: Aliveness
+  ): Consequence[BlogPost] =
+    Consequence.success(
+      post.copy(lifecycleAttributes = post.lifecycleAttributes.copy(
+        postStatus = postStatus,
+        aliveness = aliveness
+      ))
+    )
+
   private trait BlogRegistrationActionSupport { self: ActionCall =>
   protected final case class BlogImportTreeSource(root: Path, temporary: Boolean)
 
+  private def _create_blog_post(
+    post: BlogPostCreate
+  ): ExecUowM[org.goldenport.cncf.entity.CreateResult[BlogPostCreate]] = {
+    val persistent = new EntityPersistentCreate[BlogPostCreate] {
+      def id(e: BlogPostCreate): Option[EntityId] =
+        e.id.map(_blog_post_id)
+
+      def collection(e: BlogPostCreate): EntityCollectionId =
+        _runtime_collection_id(BlogPost.collectionId)
+
+      def toRecord(e: BlogPostCreate): Record =
+        e.toRecord()
+
+      override def toStoreRecord(e: BlogPostCreate): Record =
+        e.toDataStore()
+    }
+    entity_create(post)(using persistent)
+  }
+
   protected final def _save_editor_post(record: Record): ExecUowM[OperationResponse] =
     for {
-      author <- exec_from(_current_author_account_id())
-      id = _optional_entity_id(record, BlogPost.collectionId, "id")
-      slug <- exec_from(_required_string(record, "slug"))
+      owner <- exec_from(_current_owner_id())
+      target <- _optional_blog_post(record, "id")
       title <- exec_from(_required_string(record, "title"))
-      content <- exec_from(_required_string(record, "content"))
-      inlineSpecs <- exec_from(_inline_image_specs_from_editor_content(content))
+      rawContent <- exec_from(_required_string(record, "content"))
+      normalized <- blob_normalize_inline_images(
+        InlineImageContent(
+          InlineImageMarkup.HtmlFragment,
+          rawContent,
+          None
+        )
+      )
+      content = normalized.normalizedText
+      explicitSlug = _string(record, "slug")
+      inlineSpecs <- exec_from(_inline_image_specs_from_occurrences(normalized.occurrences))
       _ <- exec_from(_validate_editor_inline_specs(inlineSpecs))
       publish = _boolean(record, "publish").getOrElse(false)
-      saved <- id match {
-        case Some(postId) =>
+      saved <- target match {
+        case Some(post) =>
           for {
-            post <- _load_blog_post_direct(postId)
-            _ <- exec_from(_assert_editor_author(post, author))
-            updated = post.copy(
-              id = postId,
-              nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withName(_safe_id(slug, BlogPost.collectionId)).withTitle(title).build(),
+            slug <- explicitSlug.map(_unique_blog_slug(_, Some(post.id))).getOrElse(exec_pure(_post_slug(post)))
+            updated0 = post.copy(
+              nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withName(slug).withTitle(title).build(),
               descriptiveAttributes = org.simplemodeling.model.value.DescriptiveAttributes.Builder(post.descriptiveAttributes).withContent(content).build(),
-              slug = slug,
-              draftStatus = (if (publish) "published" else "draft"),
-              activeStatus = "active"
+              securityAttributes = _blog_security(owner, publish)
             )
-            _ <- _save_blog_post_direct(updated)
+            updated <- exec_from(_with_blog_visibility(updated0, publish, active = true))
+            _ <- entity_save(updated)
           } yield (updated.id, updated.toRecord())
         case None =>
           for {
-            post <- exec_from(BlogPostCreate.createC(
-              Record.dataAuto(
-                "id" -> _id(BlogPost.collectionId, slug),
-                "name" -> _safe_id(slug, BlogPost.collectionId),
-                "slug" -> slug,
-                "title" -> title,
-                "content" -> content,
-                "authorAccountId" -> author,
-                "draftStatus" -> (if (publish) "published" else "draft"),
-                "activeStatus" -> "active"
-              )
-            ))
-            created <- entity_create(post)
-          } yield (created.id, created.toRecord)
+            identity <- _unique_blog_identity(explicitSlug.getOrElse(title), None)
+            post: BlogPostCreate = BlogPostCreate(
+              id = None,
+              nameAttributes = NameAttributes.Builder().withName(identity.slug).withTitle(title).build(),
+              descriptiveAttributes = DescriptiveAttributes.Builder().withContent(content).build(),
+              lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
+              publicationAttributes = PublicationAttributes(None, None, None, None, None),
+              securityAttributes = _blog_security(owner, publish),
+              resourceAttributes = ResourceAttributes(),
+              auditAttributes = AuditAttributes(),
+              mediaAttributes = MediaAttributes(None, Vector.empty, Vector.empty, Vector.empty, Vector.empty),
+              contextualAttribute = ContextualAttributes()
+            )
+            created <- _create_blog_post(post)
+          } yield (created.id, created.record.getOrElse(post.toRecord()))
       }
       inlineCount <- _sync_editor_inline_images(saved._1, inlineSpecs)
     } yield OperationResponse(
@@ -389,6 +453,106 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         "inlineImageCount" -> inlineCount
       )
     )
+
+  private final case class BlogPostIdentity(slug: String, shortid: String)
+
+  private def _unique_blog_identity(
+    value: String,
+    excludeId: Option[EntityId]
+  ): ExecUowM[BlogPostIdentity] =
+    for {
+      slug <- _unique_blog_slug_value(_safe_slug(value), excludeId)
+      shortid <- _unique_blog_shortid_value(_safe_shortid(slug), excludeId)
+    } yield BlogPostIdentity(slug, shortid)
+
+  private def _unique_blog_slug(
+    value: String,
+    excludeId: Option[EntityId]
+  ): ExecUowM[String] =
+    _unique_blog_slug_value(_safe_slug(value), excludeId)
+
+  private def _unique_blog_slug_value(
+    base: String,
+    excludeId: Option[EntityId],
+    index: Int = 1
+  ): ExecUowM[String] = {
+    val candidate = if (index <= 1) base else _slug_with_suffix(base, index)
+    entity_unique_value_exists[BlogPost](
+      _runtime_collection_id(BlogPost.collectionId),
+      "name",
+      candidate,
+      excludeId,
+      EntityIdentityScope.CurrentContext
+    ).flatMap {
+      case true => _unique_blog_slug_value(base, excludeId, index + 1)
+      case false => exec_pure(candidate)
+    }
+  }
+
+  private def _unique_blog_shortid_value(
+    base: String,
+    excludeId: Option[EntityId],
+    index: Int = 1
+  ): ExecUowM[String] = {
+    val candidate = if (index <= 1) base else _shortid_with_suffix(base, index)
+    entity_unique_value_exists[BlogPost](
+      _runtime_collection_id(BlogPost.collectionId),
+      "shortid",
+      candidate,
+      excludeId,
+      EntityIdentityScope.CurrentContext,
+      includeEntityIdEntropy = true
+    ).flatMap {
+      case true => _unique_blog_shortid_value(base, excludeId, index + 1)
+      case false => exec_pure(candidate)
+    }
+  }
+
+  private def _optional_blog_post(record: Record, names: String*): ExecUowM[Option[BlogPost]] =
+    _record_value(record, names*) match {
+      case Some(value) =>
+        _resolve_blog_post(value).flatMap {
+          case Some(post) => exec_pure(Some(post))
+          case None => exec_from(Consequence.entityNotFound(s"blog post not found: ${_record_value_text(value)}"))
+        }
+      case None => exec_pure(None)
+    }
+
+  private def _resolve_blog_post(value: Any): ExecUowM[Option[BlogPost]] =
+    for {
+      owner <- exec_from(_current_owner_id())
+      id <- _resolve_blog_post_id(value)
+      post <- id match {
+        case Some(entityId) =>
+          entity_load_option[BlogPost](_blog_post_id(entityId)).map(_.map(_normalize_blog_post))
+        case None =>
+          exec_pure(None)
+      }
+    } yield post.filter(_post_owner_id(_) == owner)
+
+  private def _resolve_blog_post_id(value: Any): ExecUowM[Option[EntityId]] =
+    value match {
+      case id: EntityId =>
+        exec_pure(Some(_blog_post_id(id)))
+      case other =>
+        val text = _record_value_text(other)
+        if (text.isEmpty)
+          exec_pure(None)
+        else {
+          EntityId.parse(text).toOption match {
+            case Some(id) =>
+              exec_pure(Some(_blog_post_id(id)))
+            case None =>
+              entity_resolve_identity[BlogPost](
+                _runtime_collection_id(BlogPost.collectionId),
+                text,
+                Vector("shortid", "name"),
+                includeEntityIdEntropy = true,
+                EntityIdentityScope.CurrentContext
+              ).map(_.map(_blog_post_id))
+          }
+        }
+    }
 
   protected final def _register(
     record: Record,
@@ -398,8 +562,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       entityImageSpecs <- exec_from(_entity_image_specs(record))
       inlineImageSpecs <- exec_from(_inline_image_specs(record))
       _ <- exec_from(_validate_registration_image_specs(entityImageSpecs, inlineImageSpecs, treeRoot))
-      post <- exec_from(_blog_post(record))
-      created <- entity_create(post)
+      post <- _blog_post(record)
+      created <- _create_blog_post(post)
       postId = created.id
       entityImages <- _create_entity_images(postId, entityImageSpecs, treeRoot)
       inlineImages <- _create_inline_images(postId, inlineImageSpecs, treeRoot)
@@ -436,18 +600,39 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     Record.dataAuto(
       "id" -> id,
       "entity_id" -> id.value,
-      "draft_status" -> _string(record, "draftStatus", "draft_status").orNull,
-      "active_status" -> _string(record, "activeStatus", "active_status").orNull
+      "shortid" -> _post_shortid(id, record),
+      "slug" -> _post_slug(id, record),
+      "post_status" -> _string(record, "postStatus", "post_status").getOrElse(""),
+      "aliveness" -> _string(record, "aliveness").getOrElse("")
     )
 
   private def _save_blog_post_direct(post: BlogPost): ExecUowM[Unit] =
-    exec_from {
-      given org.goldenport.cncf.context.ExecutionContext = executionContext
-      EntityStore.standard().save(post)
+    {
+      val normalized = _normalize_blog_post(post)
+      for {
+      _ <- ConsequenceT.liftF(Free.liftF[UnitOfWorkOp, Unit](UnitOfWorkOp.EntityStoreSave(
+        normalized,
+        summon[EntityPersistent[BlogPost]],
+        None
+      )))
+      comp <- exec_from(_component)
+      _ <- exec_from {
+        comp.entitySpace.entityOption(BlogPost.collectionId).map(_.asInstanceOf[org.goldenport.cncf.entity.runtime.EntityCollection[BlogPost]]) match {
+          case Some(collection) =>
+            Consequence(collection.put(normalized))
+          case None =>
+            Consequence.unit
+        }
+      }
+    } yield ()
     }
 
+  private def _normalize_blog_post(post: BlogPost): BlogPost =
+    post.copy(id = _blog_post_id(post.id))
+
   private def _load_blog_post_direct(id: EntityId): ExecUowM[BlogPost] =
-    ConsequenceT
+    for {
+      post <- ConsequenceT
       .liftF(Free.liftF[UnitOfWorkOp, Option[BlogPost]](UnitOfWorkOp.EntityStoreLoadDirect(
         id,
         summon[EntityPersistent[BlogPost]]
@@ -455,6 +640,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       .flatMap { value =>
         exec_from(value.map(Consequence.success).getOrElse(Consequence.entityNotFound(s"blog post not found: ${id.value}")))
       }
+    } yield _normalize_blog_post(post)
 
   private def _create_entity_images(
     postId: EntityId,
@@ -476,19 +662,47 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     postId: EntityId,
     specs: Vector[BlogInlineImageSpec],
     treeRoot: Option[Path]
-  ): ExecUowM[Vector[BlogInlineImageCreate]] =
-    specs.zipWithIndex.foldLeft(exec_pure(Vector.empty[BlogInlineImageCreate])) {
-      case (z, (spec, index)) =>
-        z.flatMap { images =>
-          for {
-            blobId <- _ensure_inline_blob(spec, treeRoot, index)
-            association <- exec_from(_blob_association(postId, blobId, "inline", spec.sortOrder.orElse(Some(index)), _inline_image_attributes(spec), Some(index.toString)))
-            _ <- entity_create(association)
-            inline <- exec_from(_blog_inline_image(postId, Some(blobId), spec, index))
-            _ <- entity_create(inline)
-          } yield images :+ inline
-        }
-    }
+  ): ExecUowM[Vector[BlogInlineImage]] =
+    for {
+      owner <- exec_from(_current_owner_id())
+      plans <- specs.zipWithIndex.foldLeft(exec_pure(Vector.empty[(BlogInlineImageSpec, Int, EntityId, InlineImageOccurrence)])) {
+        case (z, (spec, index)) =>
+          z.flatMap { plans =>
+            for {
+              blobId <- _ensure_inline_blob(spec, treeRoot, index)
+              occurrence = _inline_occurrence(blobId, spec, index)
+            } yield plans :+ (spec, index, blobId, occurrence)
+          }
+      }
+      _ <- blob_attach_inline_images(_association_source_id(postId), plans.map(_._4))
+      images <- plans.foldLeft(exec_pure(Vector.empty[BlogInlineImage])) {
+        case (z, (spec, index, blobId, _)) =>
+          z.flatMap { images =>
+            for {
+              inlineCreate <- exec_from(_blog_inline_image(postId, Some(blobId), spec, index, owner))
+              created <- _create_blog_inline_image(inlineCreate)
+              image <- exec_from(_created_blog_inline_image(created.id, created.record, postId, Some(blobId), spec, index, owner))
+            } yield images :+ image
+          }
+      }
+    } yield images
+
+  private def _inline_occurrence(
+    blobId: EntityId,
+    spec: BlogInlineImageSpec,
+    index: Int
+  ): InlineImageOccurrence =
+    InlineImageOccurrence(
+      index = index,
+      originalSrc = spec.clientId.orElse(spec.path).getOrElse(blobId.parts.entropy),
+      normalizedSrc = TextusUrn.blob(blobId.parts.entropy).print,
+      blobId = blobId,
+      alt = spec.altText,
+      title = spec.titleText,
+      sortOrder = spec.sortOrder.getOrElse(index),
+      sourceKind = InlineImageSourceKind.BlobContentUrl,
+      createdBlob = spec.existingBlobId.isEmpty
+    )
 
   private def _sync_editor_inline_images(
     postId: EntityId,
@@ -496,7 +710,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ): ExecUowM[Int] =
     for {
       _ <- _delete_existing_inline_images(postId)
-      _ <- exec_from(_delete_existing_inline_associations(postId))
+      _ <- _delete_existing_inline_associations(postId)
       images <- _create_inline_images(postId, specs, None)
     } yield images.size
 
@@ -512,52 +726,88 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         }
     }
 
-  private def _assert_editor_author(
-    post: BlogPost,
-    author: EntityId
-  ): Consequence[Unit] =
-    if (post.authorAccountId.value == author.value)
-      Consequence.unit
-    else
-      Consequence.operationInvalid("Blog editor update requires the post author")
-
   private def _delete_existing_inline_images(postId: EntityId): ExecUowM[Unit] =
-    for {
-      values <- exec_from(_find_inline_images(postId))
-      _ <- values.foldLeft(exec_pure(())) { case (z, image) =>
-        z.flatMap(_ => entity_delete_hard(image.id))
-      }
-    } yield ()
+    _editor_inline_image_id_candidates(postId).foldLeft(exec_pure(())) {
+      case (z, id) =>
+        z.flatMap(_ =>
+          exec_from(_delete_entity_hard_if_present(id))
+        )
+    }
 
-  private def _find_inline_images(postId: EntityId): Consequence[Vector[BlogInlineImage]] = {
-    given org.goldenport.cncf.context.ExecutionContext = executionContext
-    EntityStore.standard()
-      .search[BlogInlineImage](EntityQuery(BlogInlineImage.collectionId, Query.plan(Record.empty), EntitySearchScope.Store))
-      .map(_.data.map(_normalize_inline_image).filter(_.blogPostId == postId))
-  }
+  private def _delete_entity_hard_if_present(id: EntityId): Consequence[Unit] =
+    {
+      given org.goldenport.cncf.context.ExecutionContext = execution_context
+      EntityStore.standard().deleteHard(id).recoverWith {
+        case conclusion if _is_not_found(conclusion) => Consequence.unit
+        case conclusion => Consequence.Failure(conclusion)
+      }
+    }
+
+  private def _find_inline_images(postId: EntityId): ExecUowM[Vector[BlogInlineImage]] =
+    _blog_inline_image_collections.foldLeft(exec_pure(Vector.empty[BlogInlineImage])) {
+      case (z, collection) =>
+        z.flatMap { values =>
+          entity_search[BlogInlineImage](EntityQuery(
+            collection,
+            Query.plan(Record.empty),
+            EntitySearchScope.Store,
+            visibilityScope = Some(EntityVisibilityScope.Owner)
+          )).map(result => values ++ result.data)
+        }
+    }.map(_.map(_normalize_inline_image).filter(_.blogPostId == postId).sortBy(_.sortOrder).distinctBy(_.id))
+
+  private def _blog_inline_image_collections: Vector[EntityCollectionId] =
+    Vector(
+      _runtime_collection_id(BlogInlineImage.collectionId),
+      BlogInlineImage.collectionId
+    ).distinct
 
   private def _normalize_inline_image(image: BlogInlineImage): BlogInlineImage =
     image.copy(
-      id = _with_collection(image.id, BlogInlineImage.collectionId),
-      blogPostId = _with_collection(image.blogPostId, BlogPost.collectionId),
+      blogPostId = _blog_post_id(image.blogPostId),
       blobId = image.blobId.map(_with_collection(_, BlobRepository.CollectionId))
     )
 
-  private def _delete_existing_inline_associations(postId: EntityId): Consequence[Unit] = {
+  private def _inline_image_id_candidates(id: EntityId): Vector[EntityId] =
+    Vector(
+      id,
+      _with_collection(id, _runtime_collection_id(BlogInlineImage.collectionId)),
+      _with_collection(id, BlogInlineImage.collectionId)
+    ).distinct
+
+  private def _editor_inline_image_id_candidates(postId: EntityId): Vector[EntityId] =
+    (0 until 128).toVector.flatMap { index =>
+      _inline_image_id_candidates(_editor_inline_image_id(postId, index))
+    }.distinct
+
+  private def _delete_existing_inline_associations(postId: EntityId): ExecUowM[Unit] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext
     val repository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
-    repository.list(AssociationFilter(
+    exec_from(repository.list(AssociationFilter(
       domain = AssociationDomain.BlobAttachment,
       sourceEntityId = Some(_association_source_id(postId)),
       targetKind = Some("blob"),
       role = Some("inline")
-    )).flatMap { associations =>
-      associations.foldLeft(Consequence.unit) {
+    ))).flatMap { associations =>
+      associations.foldLeft(exec_pure(())) {
         case (z, association) =>
-          val normalized = association.copy(id = _with_collection(association.id, AssociationStoragePolicy.BlobAttachmentCollection))
-          z.flatMap(_ => repository.delete(normalized))
+          z.flatMap(_ => exec_from(_delete_association_if_present(repository, association)))
       }
     }
+  }
+
+  private def _delete_association_if_present(
+    repository: AssociationRepository,
+    association: org.goldenport.cncf.association.Association
+  )(using org.goldenport.cncf.context.ExecutionContext): Consequence[Unit] =
+    repository.delete(association).recoverWith {
+      case conclusion if _is_not_found(conclusion) => Consequence.unit
+      case conclusion => Consequence.Failure(conclusion)
+    }
+
+  private def _is_not_found(conclusion: org.goldenport.Conclusion): Boolean = {
+    val text = conclusion.show.toLowerCase(java.util.Locale.ROOT)
+    text.contains("notfound") || text.contains("not found") || text.contains("not-found")
   }
 
   private def _ensure_entity_blob(
@@ -623,26 +873,27 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     BlobRepository.entityStore().get(id).map(_ => ())
   }
 
-  private def _blog_post(record: Record): Consequence[BlogPostCreate] = {
+  private def _blog_post(record: Record): ExecUowM[BlogPostCreate] = {
     val slug = _required_string(record, "slug")
     val content = _required_string(record, "content")
     val publish = _boolean(record, "publish").getOrElse(false)
     for {
-      s <- slug
-      t <- _string(record, "title").map(Consequence.success).getOrElse(Consequence.success(s))
-      c <- content
-      author <- _entity_id(record, "authorAccountId", "author_account_id")
-      post <- BlogPostCreate.createC(
-        record ++ Record.dataAuto(
-          "id" -> record.getAny("id").getOrElse(_id(BlogPost.collectionId, s)),
-          "name" -> _safe_id(s, BlogPost.collectionId),
-          "slug" -> s,
-          "title" -> t,
-          "content" -> c,
-          "authorAccountId" -> author,
-          "draftStatus" -> (if (publish) "published" else "draft"),
-          "activeStatus" -> "active"
-        )
+      s <- exec_from(slug)
+      identity <- _unique_blog_identity(s, None)
+      t <- exec_from(_string(record, "title").map(Consequence.success).getOrElse(Consequence.success(identity.slug)))
+      c <- exec_from(content)
+      owner <- exec_from(_current_owner_id())
+      post = BlogPostCreate(
+        id = None,
+        nameAttributes = NameAttributes.Builder().withName(identity.slug).withTitle(t).build(),
+        descriptiveAttributes = DescriptiveAttributes.Builder().withContent(c).build(),
+        lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
+        publicationAttributes = PublicationAttributes(None, None, None, None, None),
+        securityAttributes = _blog_security(owner, publish),
+        resourceAttributes = ResourceAttributes(),
+        auditAttributes = AuditAttributes(),
+        mediaAttributes = MediaAttributes(None, Vector.empty, Vector.empty, Vector.empty, Vector.empty),
+        contextualAttribute = ContextualAttributes()
       )
     } yield post
   }
@@ -657,7 +908,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ): Consequence[AssociationCreate] =
     Consequence.success(
       AssociationCreate(
-        id = Some(_id(AssociationStoragePolicy.BlobAttachmentCollection, Vector(Some(postId.display), Some(role), discriminator, Some(blobId.display)).flatten.mkString("-"))),
+        id = Some(_id(AssociationStoragePolicy.BlobAttachmentCollection, Vector(Some(postId.value), Some(role), discriminator, Some(blobId.value)).flatten.mkString("-"))),
         associationId = UUID.randomUUID().toString,
         sourceEntityId = _association_source_id(postId),
         targetEntityId = blobId.value,
@@ -671,25 +922,86 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     )
 
   private def _association_source_id(postId: EntityId): String =
-    postId.display
+    postId.value
 
   private def _blog_inline_image(
     postId: EntityId,
     blobId: Option[EntityId],
     spec: BlogInlineImageSpec,
-    index: Int
+    index: Int,
+    owner: String
   ): Consequence[BlogInlineImageCreate] =
     BlogInlineImageCreate.createC(
       Record.dataAuto(
-        "id" -> _id(BlogInlineImage.collectionId, s"${postId.display}-inline-$index"),
+        "id" -> _editor_inline_image_id(postId, index),
         "blogPostId" -> postId,
         "sourceUrl" -> spec.path.orElse(spec.clientId).orElse(blobId.map(_.value)).getOrElse(s"inline-$index"),
         "altText" -> spec.altText,
         "titleText" -> spec.titleText,
         "sortOrder" -> spec.sortOrder.getOrElse(index),
-        "synchronized" -> blobId.isDefined
+        "synchronized" -> blobId.isDefined,
+        "ownerId" -> owner
       )
     )
+
+  private def _editor_inline_image_id(
+    postId: EntityId,
+    index: Int
+  ): EntityId =
+    EntityId(
+      postId.major,
+      postId.minor,
+      _runtime_collection_id(BlogInlineImage.collectionId),
+      postId.timestamp,
+      Some(s"${postId.parts.entropy}_inline_${index}")
+    )
+
+  private def _create_blog_inline_image(
+    image: BlogInlineImageCreate
+  ): ExecUowM[org.goldenport.cncf.entity.CreateResult[BlogInlineImageCreate]] = {
+    val persistent = new EntityPersistentCreate[BlogInlineImageCreate] {
+      def id(e: BlogInlineImageCreate): Option[EntityId] =
+        e.id.map(_with_collection(_, _runtime_collection_id(BlogInlineImage.collectionId)))
+
+      def collection(e: BlogInlineImageCreate): EntityCollectionId =
+        _runtime_collection_id(BlogInlineImage.collectionId)
+
+      def toRecord(e: BlogInlineImageCreate): Record =
+        e.toRecord()
+
+      override def toStoreRecord(e: BlogInlineImageCreate): Record =
+        e.toDataStore()
+
+      override def storeFieldName(logicalName: String): String =
+        summon[EntityPersistent[BlogInlineImage]].storeFieldName(logicalName)
+    }
+    entity_create(image)(using persistent)
+  }
+
+  private def _created_blog_inline_image(
+    id: EntityId,
+    record: Option[Record],
+    postId: EntityId,
+    blobId: Option[EntityId],
+    spec: BlogInlineImageSpec,
+    index: Int,
+    owner: String
+  ): Consequence[BlogInlineImage] =
+    record.map(BlogInlineImage.createC).getOrElse(
+      BlogInlineImage.createC(
+        Record.dataAuto(
+          "id" -> id,
+          "blogPostId" -> postId,
+          "blobId" -> blobId,
+          "sourceUrl" -> spec.path.orElse(spec.clientId).orElse(blobId.map(_.value)).getOrElse(s"inline-$index"),
+          "altText" -> spec.altText,
+          "titleText" -> spec.titleText,
+          "sortOrder" -> spec.sortOrder.getOrElse(index),
+          "synchronized" -> blobId.isDefined,
+          "ownerId" -> owner
+        )
+      )
+    ).map(_normalize_inline_image)
 
   private def _entity_image_attributes(spec: BlogEntityImageSpec): Map[String, String] =
     Vector(
@@ -732,12 +1044,15 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         Consequence.operationInvalid(s"failed to read image file for blob registration: ${file}: ${e.getMessage}")
     }
 
-  protected final def _register_record(source: Record, draft: BlogRegistrationDraft): Record =
+  protected final def _register_record(
+    source: Record,
+    draft: BlogRegistrationDraft,
+    normalizedInlineImages: Option[InlineImageNormalizeResult] = None
+  ): Record =
     Record.dataAuto(
       "slug" -> draft.slug.getOrElse(_slug_from_title(draft.title)),
       "title" -> draft.title,
-      "content" -> draft.content,
-      "authorAccountId" -> source.getAny("authorAccountId").orElse(source.getAny("author_account_id")).orNull,
+      "content" -> normalizedInlineImages.map(_.normalizedText).getOrElse(draft.content),
       "publish" -> _boolean(source, "publish").getOrElse(false),
       "description" -> draft.description,
       "canonicalPath" -> draft.canonicalPath,
@@ -749,14 +1064,27 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           "caption" -> image.caption
         )
       },
-      "inlineImages" -> draft.inlineImages.map { image =>
-        Record.dataAuto(
-          "path" -> image.treePath.getOrElse(image.sourcePath),
-          "altText" -> image.altText,
-          "titleText" -> image.titleText,
-          "sortOrder" -> image.index
-        )
-      }
+      "inlineImages" -> normalizedInlineImages
+        .map(_.occurrences.map(_inline_image_record))
+        .getOrElse {
+          draft.inlineImages.map { image =>
+            Record.dataAuto(
+              "path" -> image.treePath.getOrElse(image.sourcePath),
+              "altText" -> image.altText,
+              "titleText" -> image.titleText,
+              "sortOrder" -> image.index
+            )
+          }
+        }
+    )
+
+  private def _inline_image_record(occurrence: InlineImageOccurrence): Record =
+    Record.dataAuto(
+      "existingBlobId" -> occurrence.blobId,
+      "clientId" -> occurrence.originalSrc,
+      "altText" -> occurrence.alt,
+      "titleText" -> occurrence.title,
+      "sortOrder" -> occurrence.sortOrder
     )
 
   private def _entity_image_specs(record: Record): Consequence[Vector[BlogEntityImageSpec]] =
@@ -864,48 +1192,38 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     names.iterator.flatMap { name =>
       record.getAny(name).flatMap {
         case id: EntityId => Some(id)
+        case value if java.util.Objects.isNull(value) => None
         case value => EntityId.parse(value.toString.trim).toOption
       }.orElse {
         record.getAsC[EntityId](name).toOption.flatten
       }
     }.nextOption()
 
-  private def _with_collection(id: EntityId, collection: EntityCollectionId): EntityId =
-    if (id.collection == collection)
-      id
-    else
-      EntityId(id.major, id.minor, collection, id.timestamp, id.entropy)
-
   protected final def _with_current_author_if_missing(record: Record): Consequence[Record] =
-    if (_has_any(record, "authorAccountId", "author_account_id"))
-      Consequence.success(record)
-    else
-      _current_author_account_id().map { author =>
-        record ++ Record.dataAuto("authorAccountId" -> author)
-      }
+    _current_owner_id().map(owner => record ++ Record.dataAuto("ownerId" -> owner))
 
-  protected final def _current_author_account_id(): Consequence[EntityId] = {
+  protected final def _current_owner_id(): Consequence[String] = {
     val subject = SecuritySubject.current(using executionContext)
     if (!subject.isAuthenticated) {
       Consequence.operationInvalid("Blog authoring requires an authenticated session")
     } else {
-      val candidates = Vector(
-        subject.attributes.get("authorAccountId"),
-        subject.attributes.get("author_account_id"),
-        subject.attributes.get("userAccountId"),
-        subject.attributes.get("user_account_id"),
-        subject.attributes.get("accountId"),
-        subject.attributes.get("account_id"),
-        Some(subject.subjectId)
-      ).flatten.map(_.trim).filter(_.nonEmpty)
-      candidates.flatMap(x => EntityId.parse(x).toOption).headOption match {
-        case Some(id) => Consequence.success(id)
-        case None =>
-          val collection = EntityCollectionId("textus", "account", "account")
-          Consequence.success(EntityId("textus", _safe_id(subject.subjectId, collection), collection))
-      }
+      Consequence.success(BlogComponentRuntimeFactory.ownerIdText(subject.subjectId))
     }
   }
+
+  protected final def _blog_security(
+    owner: String,
+    publish: Boolean
+  ): SecurityAttributes =
+    if (publish)
+      SecurityAttributes.publicOwnedBy(owner)
+    else
+      SecurityAttributes.privateOwnedBy(owner)
+
+  protected final def _post_owner_id(post: BlogPost): String =
+    post.toDataStore().getString("owner_id")
+      .orElse(post.toRecord().getString("author_id"))
+      .getOrElse(post.securityAttributes.ownerId.id.value)
 
   protected final def _require_authenticated(): Consequence[Unit] =
     if (SecuritySubject.current(using executionContext).isAuthenticated)
@@ -929,10 +1247,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     _string(record, names*).map(Consequence.success).getOrElse(Consequence.argumentMissing(names.head))
 
   private def _string(record: Record, names: String*): Option[String] =
-    names.iterator.flatMap(record.getAny).map(_.toString.trim).find(_.nonEmpty)
+    names.iterator.flatMap(record.getAny).flatMap {
+      case value if java.util.Objects.isNull(value) => None
+      case value => Some(value.toString.trim)
+    }.find(_.nonEmpty)
 
   private def _boolean(record: Record, names: String*): Option[Boolean] =
     names.iterator.flatMap(record.getAny).flatMap {
+      case value if java.util.Objects.isNull(value) => None
       case b: java.lang.Boolean => Some(b.booleanValue)
       case s: String => _boolean_string(s)
       case other => _boolean_string(other.toString)
@@ -942,11 +1264,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     value.trim.toLowerCase(java.util.Locale.ROOT) match {
       case "true" | "on" | "yes" | "1" => Some(true)
       case "false" | "off" | "no" | "0" => Some(false)
+      case "published" => Some(true)
+      case "draft" => Some(false)
       case other => scala.util.Try(other.toBoolean).toOption
     }
 
   private def _int(record: Record, names: String*): Option[Int] =
     names.iterator.flatMap(record.getAny).flatMap {
+      case value if java.util.Objects.isNull(value) => None
       case i: java.lang.Integer => Some(i.intValue)
       case i: Int => Some(i)
       case s: String => scala.util.Try(s.trim.toInt).toOption
@@ -964,6 +1289,18 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       Some(UniversalId.StableTimestamp),
       Some(UniversalId.StableEntropy)
     )
+
+  private def _runtime_collection_id(collection: EntityCollectionId): EntityCollectionId =
+    EntityCollectionId(executionContext.major, executionContext.minor, collection.name)
+
+  private def _blog_post_id(id: EntityId): EntityId =
+    _with_collection(id, _runtime_collection_id(BlogPost.collectionId))
+
+  private def _with_collection(id: EntityId, collection: EntityCollectionId): EntityId =
+    if (id.collection == collection)
+      id
+    else
+      EntityId(id.major, id.minor, collection, id.timestamp, id.entropy)
 
   private def _safe_id(value: String, collection: EntityCollectionId): String =
     _bounded_id(BlobStoreSupport.safeSegment(value).replace("-", "_").replace(".", "_"), collection) match {
@@ -998,7 +1335,93 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     }
 
   private def _slug_from_title(title: String): String =
-    _safe_id(title, BlogPost.collectionId)
+    _safe_slug(title)
+
+  private def _unique_slug_value(base: String, existing: Set[String]): String =
+    if (!existing.contains(base))
+      base
+    else
+      Iterator.from(2).map(_slug_with_suffix(base, _)).find(x => !existing.contains(x)).get
+
+  private def _slug_with_suffix(base: String, index: Int): String = {
+    val suffix = s"-$index"
+    val prefix = base.take((64 - suffix.length).max(1)).stripSuffix("-")
+    s"$prefix$suffix"
+  }
+
+  private def _unique_shortid_value(base: String, existing: Set[String]): String =
+    if (!existing.contains(base))
+      base
+    else
+      Iterator.from(2).map(_shortid_with_suffix(base, _)).find(x => !existing.contains(x)).get
+
+  private def _shortid_with_suffix(base: String, index: Int): String = {
+    val suffix = s"_$index"
+    val prefix = base.take((64 - suffix.length).max(1)).stripSuffix("_")
+    s"$prefix$suffix"
+  }
+
+  private def _safe_slug(value: String): String = {
+    val raw = BlobStoreSupport.safeSegment(value)
+      .toLowerCase(java.util.Locale.ROOT)
+      .replace("_", "-")
+      .replace(".", "-")
+      .replaceAll("-+", "-")
+      .stripPrefix("-")
+      .stripSuffix("-")
+    val bounded = (if (raw.nonEmpty) raw else "post").take(64).stripSuffix("-")
+    if (bounded.headOption.exists(_.isLetterOrDigit))
+      bounded
+    else
+      s"post-$bounded".take(64).stripSuffix("-")
+  }
+
+  private def _safe_shortid(value: String): String = {
+    val raw = BlobStoreSupport.safeSegment(value)
+      .toLowerCase(java.util.Locale.ROOT)
+      .map {
+        case c if c.isLetterOrDigit || c == '_' => c
+        case _ => '_'
+      }
+      .mkString
+      .replaceAll("_+", "_")
+      .stripPrefix("_")
+      .stripSuffix("_")
+    val bounded = (if (raw.nonEmpty) raw else "post").take(64).stripSuffix("_")
+    if (bounded.nonEmpty) bounded else "post"
+  }
+
+  private def _owner_id_text(text: String): String = {
+    BlogComponentRuntimeFactory.ownerIdText(text)
+  }
+
+  private def _post_shortid(post: BlogPost): String =
+    _post_shortid(post.id, post.toRecord())
+
+  private def _post_shortid(id: EntityId, record: Record): String =
+    _string(record, "shortid", "shortId", "short_id").getOrElse(id.parts.entropy)
+
+  private def _post_slug(post: BlogPost): String =
+    _post_slug(post.id, post.toRecord())
+
+  private def _post_slug(id: EntityId, record: Record): String =
+    _string(record, "slug", "name").getOrElse(id.parts.entropy)
+
+  private def _matches_blog_reference(post: BlogPost, value: String): Boolean =
+    post.id.value == value || _post_shortid(post) == value || _post_slug(post) == value
+
+  private def _record_value(record: Record, names: String*): Option[Any] =
+    names.iterator.flatMap { name =>
+      record.getAny(name).filter(value => _record_value_text(value).nonEmpty).orElse {
+        record.getAsC[EntityId](name).toOption.flatten
+      }
+    }.nextOption()
+
+  private def _record_value_text(value: Any): String =
+    value match {
+      case id: EntityId => id.value
+      case other => Option(other).map(_.toString.trim).getOrElse("")
+    }
 
   private def _inline_image_specs_from_editor_content(content: String): Consequence[Vector[BlogInlineImageSpec]] = {
     val records = BlogComponentRuntimeFactory.extractBlobContentImageIds(content).zipWithIndex.map { case (blobId, index) =>
@@ -1010,6 +1433,15 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     }
     _inline_image_specs(Record.dataAuto("inlineImages" -> records))
   }
+
+  private def _inline_image_specs_from_occurrences(
+    occurrences: Vector[InlineImageOccurrence]
+  ): Consequence[Vector[BlogInlineImageSpec]] =
+    _inline_image_specs(
+      Record.dataAuto(
+        "inlineImages" -> occurrences.map(_inline_image_record)
+      )
+    )
 
   protected final def _list_image_blobs(record: Record): Consequence[Record] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext
@@ -1053,54 +1485,37 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   }
 
   private trait BlogReadActionSupport { self: ActionCall =>
-    protected final def _entity_id(record: Record, names: String*): Consequence[EntityId] =
-      _optional_entity_id(record, BlogPost.collectionId, names*) match {
-        case Some(id) => Consequence.success(id)
-        case None => Consequence.argumentMissing(names.head)
-      }
-
-    protected final def _current_author_account_id(): Consequence[EntityId] = {
+    protected final def _current_owner_id(): Consequence[String] = {
       val subject = SecuritySubject.current(using executionContext)
       if (!subject.isAuthenticated) {
         Consequence.operationInvalid("Blog authoring requires an authenticated session")
       } else {
-        val candidates = Vector(
-          subject.attributes.get("authorAccountId"),
-          subject.attributes.get("author_account_id"),
-          subject.attributes.get("userAccountId"),
-          subject.attributes.get("user_account_id"),
-          subject.attributes.get("accountId"),
-          subject.attributes.get("account_id"),
-          Some(subject.subjectId)
-        ).flatten.map(_.trim).filter(_.nonEmpty)
-        candidates.flatMap(x => EntityId.parse(x).toOption).headOption match {
-          case Some(id) => Consequence.success(id)
-          case None =>
-            val collection = EntityCollectionId("textus", "account", "account")
-            Consequence.success(EntityId("textus", _safe_subject_id(subject.subjectId), collection))
-        }
+        Consequence.success(BlogComponentRuntimeFactory.ownerIdText(subject.subjectId))
       }
     }
 
-    private def _safe_subject_id(value: String): String = {
-      val sanitized = value.map {
-        case c if c.isLetterOrDigit || c == '_' => c
-        case _ => '_'
-      }.mkString
-      sanitized.headOption match {
-        case Some(c) if c.isLetter => sanitized
-        case _ => s"id_${sanitized}"
-      }
-    }
+    protected final def _entity_id(record: Record, names: String*): ExecUowM[EntityId] =
+      _load_blog_post(record, names*).map(_.id)
 
-    protected final def _assert_editor_author(
-      post: BlogPost,
-      author: EntityId
-    ): Consequence[Unit] =
-      if (post.authorAccountId.value == author.value)
-        Consequence.unit
-      else
-        Consequence.operationInvalid("Blog editor update requires the post author")
+    protected final def _load_blog_post(record: Record, names: String*): ExecUowM[BlogPost] =
+      _record_value(record, names*) match {
+        case Some(value) =>
+          _resolve_my_blog_post(value).flatMap {
+            case Some(post) => exec_pure(post)
+            case None => exec_from(Consequence.entityNotFound(s"blog post not found: ${_record_value_text(value)}"))
+          }
+        case None => exec_from(Consequence.argumentMissing(names.head))
+      }
+
+    protected final def _load_public_blog_post(record: Record, names: String*): ExecUowM[BlogPost] =
+      _record_value(record, names*) match {
+        case Some(value) =>
+          _resolve_public_blog_post(value).flatMap {
+            case Some(post) => exec_pure(post)
+            case None => exec_from(Consequence.entityNotFound(s"blog post not found: ${_record_value_text(value)}"))
+          }
+        case None => exec_from(Consequence.argumentMissing(names.head))
+      }
 
     private def _optional_entity_id(
       record: Record,
@@ -1121,56 +1536,113 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           EntityId(id.major, id.minor, collection, id.timestamp, id.entropy)
       }
 
-    protected final def _public_visible(post: BlogPost): Consequence[Unit] =
-      if (_is_public(post))
-        Consequence.unit
+    private def _with_collection(id: EntityId, collection: EntityCollectionId): EntityId =
+      if (id.collection == collection)
+        id
       else
-        Consequence.entityNotFound(s"public blog post not found: ${post.id.value}")
+        EntityId(id.major, id.minor, collection, id.timestamp, id.entropy)
+
+    private def _runtime_collection_id(collection: EntityCollectionId): EntityCollectionId =
+      EntityCollectionId(executionContext.major, executionContext.minor, collection.name)
+
+    private def _blog_post_id(id: EntityId): EntityId =
+      _with_collection(id, _runtime_collection_id(BlogPost.collectionId))
+
+    private def _resolve_public_blog_post(value: Any): ExecUowM[Option[BlogPost]] =
+      _resolve_blog_post_id(value).flatMap {
+        case Some(id) =>
+          entity_load_option[BlogPost](id).map(_.map(_normalize_blog_post))
+        case None =>
+          exec_pure(None)
+      }
+
+    private def _resolve_my_blog_post(value: Any): ExecUowM[Option[BlogPost]] =
+      for {
+        id <- _resolve_blog_post_id(value)
+        post <- id match {
+          case Some(entityId) =>
+            entity_load_option[BlogPost](entityId).map(_.map(_normalize_blog_post))
+          case None =>
+            exec_pure(None)
+        }
+      } yield post
+
+    private def _resolve_blog_post_id(value: Any): ExecUowM[Option[EntityId]] =
+      value match {
+        case id: EntityId =>
+          exec_pure(Some(_blog_post_id(id)))
+        case other =>
+          val text = _record_value_text(other)
+          if (text.isEmpty)
+            exec_pure(None)
+          else {
+            EntityId.parse(text).toOption match {
+            case Some(id) =>
+                exec_pure(Some(_blog_post_id(id)))
+              case None =>
+                entity_resolve_identity[BlogPost](
+                  _runtime_collection_id(BlogPost.collectionId),
+                  text,
+                  Vector("shortid", "name"),
+                  includeEntityIdEntropy = true,
+                  EntityIdentityScope.CurrentContext
+                ).map(_.map(_blog_post_id))
+            }
+          }
+      }
+
+    private def _matches_blog_reference(post: BlogPost, value: String): Boolean =
+      post.id.value == value || post.id.print == value || _post_shortid(post) == value || _post_slug(post) == value
+
+    private def _post_shortid(post: BlogPost): String =
+      post.toRecord().getString("shortid").getOrElse(post.id.parts.entropy)
+
+    private def _post_slug(post: BlogPost): String =
+      post.toRecord().getString("name").getOrElse(post.id.parts.entropy)
+
+    private def _record_value(record: Record, names: String*): Option[Any] =
+      names.iterator.flatMap { name =>
+        record.getAny(name).filter(value => _record_value_text(value).nonEmpty).orElse {
+          record.getAsC[EntityId](name).toOption.flatten
+        }
+      }.nextOption()
+
+    private def _record_value_text(value: Any): String =
+      value match {
+        case id: EntityId => id.value
+        case other => Option(other).map(_.toString.trim).getOrElse("")
+      }
 
     protected final def _load_blog_post(id: EntityId): ExecUowM[BlogPost] =
-      ConsequenceT
-        .liftF(Free.liftF[UnitOfWorkOp, Option[BlogPost]](UnitOfWorkOp.EntityStoreLoadDirect(
-          id,
-          summon[EntityPersistent[BlogPost]]
-        )))
-        .flatMap { value =>
-          exec_from(value.map(Consequence.success).getOrElse(Consequence.entityNotFound(s"blog post not found: ${id.value}")))
-        }
+      entity_load[BlogPost](id).map(_normalize_blog_post)
+
+    private def _load_blog_post_direct(id: EntityId): ExecUowM[BlogPost] =
+      entity_load_internal[BlogPost](id).map(_normalize_blog_post)
 
     protected final def _search_blog_posts(
       query: Query[?]
     ): ExecUowM[SearchResult[BlogPost]] =
-      ConsequenceT.liftF(Free.liftF(UnitOfWorkOp.EntityStoreSearchDirect(
-        EntityQuery(BlogPost.collectionId, query, EntitySearchScope.Store),
-        summon[EntityPersistent[BlogPost]],
-        None
-      )))
+      entity_search[BlogPost](EntityQuery(_runtime_collection_id(BlogPost.collectionId), query, EntitySearchScope.Store, visibilityScope = Some(EntityVisibilityScope.Public))).map { result =>
+        result.copy(data = result.data.map(_normalize_blog_post))
+      }
 
-    protected final def _filter_public_search(
+    protected final def _search_my_blog_posts(
+      query: Query[?]
+    ): ExecUowM[SearchResult[BlogPost]] =
+      entity_search[BlogPost](EntityQuery(_runtime_collection_id(BlogPost.collectionId), query, EntitySearchScope.Store, visibilityScope = Some(EntityVisibilityScope.Owner))).map { result =>
+        result.copy(data = result.data.map(_normalize_blog_post))
+      }
+
+    private def _normalize_blog_post(post: BlogPost): BlogPost =
+      post.copy(id = _blog_post_id(post.id))
+
+    protected final def _filter_search_text(
       posts: Vector[BlogPost],
       record: Record
-    ): Vector[BlogPost] = {
-      val publicPosts = (_string(record, "draftStatus", "draft_status"), _string(record, "activeStatus", "active_status")) match {
-        case (Some(x), _) if x != "published" => Vector.empty
-        case (_, Some(x)) if x != "active" => Vector.empty
-        case _ => posts.filter(_is_public)
+    ): Vector[BlogPost] =
+      _string(record, "text").map(_normalize_text).fold(posts) { needle =>
+        posts.filter(post => _search_text(post).contains(needle))
       }
-      _string(record, "text").map(_normalize_text).fold(publicPosts) { needle =>
-        publicPosts.filter(post => _search_text(post).contains(needle))
-      }
-    }
-
-    protected final def _filter_author_search(
-      posts: Vector[BlogPost],
-      record: Record,
-      author: EntityId
-    ): Vector[BlogPost] = {
-      val owned = posts.filter(_.authorAccountId.value == author.value)
-      val searched = _string(record, "text").map(_normalize_text).fold(owned) { needle =>
-        owned.filter(post => _search_text(post).contains(needle))
-      }
-      _sort_feed_posts(searched)
-    }
 
     protected final def _page[A](
       values: Vector[A],
@@ -1199,20 +1671,42 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       }
 
     protected final def _public_post_record(post: BlogPost): Consequence[Record] =
-      _image_projection(post.id).map { projection =>
+      for {
+        projection <- _image_projection(post.id)
+        base = post.toRecord()
+        rendered <- _render_public_content(_string(base, "content"))
+      } yield {
         val representative = projection.representativeImage
-        post.toRecord() ++ Record.dataAuto(
+        base ++ rendered.map("content" -> _).map(Record.dataAuto(_)).getOrElse(Record.empty) ++ Record.dataAuto(
+          "entity_id" -> post.id.value,
+          "shortid" -> _post_shortid(post),
+          "slug" -> _post_slug(post),
+          "authorId" -> post.securityAttributes.ownerId.id.value,
           "representativeBlobId" -> representative.map(_.metadata.id),
           "representativeBlobUrl" -> representative.map(_.metadata.accessUrl.displayUrl),
           "imageRoles" -> projection.images.map(_image_role_record)
         )
       }
 
+    private def _render_public_content(content: Option[String]): Consequence[Option[String]] =
+      content match {
+        case Some(value) =>
+          given org.goldenport.cncf.context.ExecutionContext = executionContext
+          component
+            .map(Consequence.success)
+            .getOrElse(Consequence.serviceUnavailable("BlogComponent is not attached to a subsystem component"))
+            .flatMap { component =>
+            BlobInlineImageWorkflow(component).renderTextusBlobUrns(value).map(Some(_))
+          }
+        case None =>
+          Consequence.success(None)
+      }
+
     private def _image_projection(postId: EntityId): Consequence[BlobProjectionResult] = {
       given org.goldenport.cncf.context.ExecutionContext = executionContext
       val associations = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
       val blobs = BlobRepository.entityStore()
-      BlobProjection.entityImageProjection(postId.display)(
+      BlobProjection.entityImageProjection(postId.value)(
         BlobProjection.Loaders(
           listAssociations = filter => associations.list(filter),
           loadBlob = id => blobs.get(id)
@@ -1228,14 +1722,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         "sortOrder" -> row.association.sortOrder
       )
 
-    private def _is_public(post: BlogPost): Boolean =
-      post.draftStatus == "published" && post.activeStatus == "active"
-
     private def _search_text(post: BlogPost): String = {
       val record = post.toRecord()
-      Vector("slug", "title", "headline", "summary", "description", "content")
+      Vector("name", "title", "headline", "summary", "description", "content")
         .flatMap(record.getAny)
-        .map(_.toString)
+        .flatMap {
+          case value if java.util.Objects.isNull(value) => None
+          case value => Some(value.toString)
+        }
         .map(_normalize_text)
         .mkString("\n")
     }
@@ -1244,10 +1738,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       value.toLowerCase(java.util.Locale.ROOT)
 
     protected final def _string(record: Record, names: String*): Option[String] =
-      names.iterator.flatMap(record.getAny).map(_.toString.trim).find(_.nonEmpty)
+      names.iterator.flatMap(record.getAny).flatMap {
+        case value if java.util.Objects.isNull(value) => None
+        case value => Some(value.toString.trim)
+      }.find(_.nonEmpty)
 
     protected final def _int(record: Record, names: String*): Option[Int] =
       names.iterator.flatMap(record.getAny).flatMap {
+        case value if java.util.Objects.isNull(value) => None
         case i: java.lang.Integer => Some(i.intValue)
         case i: Int => Some(i)
         case s: String => scala.util.Try(s.trim.toInt).toOption
@@ -1295,5 +1793,14 @@ object BlogComponentRuntimeFactory {
       bounded
     else
       s"id_${bounded}"
+  }
+
+  def ownerIdText(text: String): String = {
+    val sanitized = text.trim.map {
+      case c if c.isLetterOrDigit || c == '_' => c
+      case _ => '_'
+    }.mkString
+    val nonempty = if (sanitized.isEmpty) "unknown" else sanitized
+    if (nonempty.headOption.exists(_.isLetter)) nonempty else s"id_$nonempty"
   }
 }

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blog</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body data-page="home">
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+        <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+        <nav class="d-flex align-items-center gap-3">
+          <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
+          <a class="nav-link" href="/web/blog/userblogs" data-my-posts-link hidden>My posts</a>
+          <a class="nav-link" href="/web/textus-user-account/signin?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-login-link>Log in</a>
+          <a class="btn btn-sm btn-outline-primary" href="/web/textus-user-account/signup?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-signup-link>Create account</a>
+          <form action="/web/blog/logout" method="post" data-logout-form hidden>
+            <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
+          </form>
+          <span class="text-secondary small" data-session-name></span>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container py-5">
+      <section class="row align-items-center g-4">
+        <div class="col-lg-7">
+          <h1 class="display-5 fw-semibold mb-3">Blog</h1>
+          <p class="lead text-secondary">Read public posts, or sign in to manage your own drafts, published posts, and uploads.</p>
+          <div class="d-flex flex-wrap gap-2 mt-4">
+            <a class="btn btn-primary" href="/web/blog/publicblogs">Read public blog</a>
+            <a class="btn btn-outline-primary" href="/web/blog/userblogs" data-my-posts-link hidden>My posts</a>
+            <a class="btn btn-outline-secondary" href="/rest/v1/blog/blog/atomFeed">Atom feed</a>
+          </div>
+        </div>
+        <div class="col-lg-5">
+          <div class="home-panel border rounded-3 bg-white p-4">
+            <h2 class="h5">Author workflow</h2>
+            <ul class="mb-0 text-secondary">
+              <li>Review your posts from the author dashboard.</li>
+              <li>Create or update HTML fragment posts.</li>
+              <li>Upload Blog file bundles for archive import.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" data-toast hidden></div>
+    <script src="/web/assets/bootstrap.bundle.min.js"></script>
+    <script src="/web/assets/textus-widgets.js"></script>
+    <script src="/web/blog/assets/blog.js"></script>
+  </body>
+</html>

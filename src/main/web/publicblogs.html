@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Public Blog</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body data-page="reader">
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+      <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+      <nav class="d-flex align-items-center gap-3">
+        <a class="nav-link" href="/web/blog/userblogs" data-my-posts-link hidden>My posts</a>
+        <a class="nav-link" href="/web/textus-user-account/signin?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-login-link>Log in</a>
+        <a class="btn btn-sm btn-outline-primary" href="/web/textus-user-account/signup?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-signup-link>Create account</a>
+        <form action="/web/blog/logout" method="post" data-logout-form hidden>
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
+        </form>
+        <span class="text-secondary small" data-session-name></span>
+      </nav>
+      </div>
+    </header>
+
+    <main class="reader-shell">
+      <section class="reader-pane">
+        <div class="list-toolbar">
+          <form class="search-form" action="/form/blog-component/blog/search-posts" method="post" data-search-form>
+            <input type="hidden" name="textus.form.page" value="publicblogs">
+            <input type="hidden" name="limit" value="50">
+            <input class="form-control" type="search" name="text" placeholder="Search posts" autocomplete="off">
+            <button class="btn btn-primary" type="submit">Search</button>
+          </form>
+          <a class="feed-link" href="/rest/v1/blog/blog/atomFeed">Atom</a>
+        </div>
+        <div class="post-list" data-post-list>
+          <noscript>
+            <p class="post-row-meta">Use the search form to list public posts.</p>
+          </noscript>
+        </div>
+      </section>
+
+      <section class="article-pane" data-article-pane>
+        <a class="back-to-list" href="/web/blog/publicblogs" data-back-to-list hidden>Back to public posts</a>
+        <article class="blog-article" data-article>
+          <h1 data-article-title></h1>
+          <div class="article-body" data-article-body></div>
+        </article>
+      </section>
+    </main>
+
+    <div class="toast" data-toast hidden></div>
+    <script src="/web/assets/bootstrap.bundle.min.js"></script>
+    <script src="/web/assets/textus-widgets.js"></script>
+    <script src="/web/blog/assets/blog.js"></script>
+  </body>
+</html>

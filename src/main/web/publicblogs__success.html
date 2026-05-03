@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Public Blog - Results</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body>
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+        <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+        <nav class="d-flex align-items-center gap-3">
+          <a class="nav-link" href="/web/blog/userblogs">My posts</a>
+          <a class="nav-link" href="/rest/v1/blog/blog/atomFeed">Atom</a>
+        </nav>
+      </div>
+    </header>
+    <main class="container py-4">
+      <form class="search-form mb-4" action="/form/blog-component/blog/search-posts" method="post">
+        <input type="hidden" name="textus.form.page" value="publicblogs">
+        <input type="hidden" name="limit" value="50">
+        <input class="form-control" type="search" name="text" value="${form.text}" placeholder="Search posts" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Search</button>
+      </form>
+      <textus:card-list
+        source="result.body"
+        title="title"
+        subtitle="slug"
+        columns="title:Title,slug:Slug,updated_at:Updated"
+        detail-href="/form/blog-component/blog/get-post/result"
+        detail-param-id="{shortid}"
+        detail-param-textus.form.page="publicpost"
+        detail-label="Read"
+        empty="No public posts"></textus:card-list>
+    </main>
+  </body>
+</html>

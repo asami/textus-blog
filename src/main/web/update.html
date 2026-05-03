@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Edit Post - Blog</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body data-page="edit">
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+      <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+      <nav class="d-flex align-items-center gap-3">
+        <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
+        <a class="nav-link" href="/web/blog/userblogs">My posts</a>
+        <form action="/web/blog/logout" method="post" data-logout-form hidden>
+          <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
+        </form>
+        <span class="text-secondary small" data-session-name></span>
+      </nav>
+      </div>
+    </header>
+
+    <main class="edit-shell">
+      <section class="page-head">
+        <div>
+          <h1 data-editor-heading>New post</h1>
+          <p>Write HTML fragment content for the BlogPost body.</p>
+        </div>
+        <div class="page-actions">
+          <a class="btn btn-outline-secondary" href="/web/blog/userblogs">Back to my posts</a>
+        </div>
+      </section>
+
+      <form class="editor-form editor-page-form" action="/form/blog-component/blog/save-editor-post" method="post" data-editor-form>
+        <input type="hidden" name="textus.form.page" value="update">
+        <label>
+          Post id
+          <input class="form-control" name="id" data-editor-id required>
+          <span class="form-text">Without JavaScript, open a post from My posts and use the edit form on that result page.</span>
+        </label>
+        <label>
+          Title
+          <input class="form-control" name="title" data-editor-title required>
+        </label>
+        <label>
+          URL slug
+          <input class="form-control" name="slug" data-editor-slug placeholder="keep current slug">
+          <span class="form-text">Optional. Keep unchanged when blank; if changed, the server makes it unique.</span>
+        </label>
+        <label>
+          Content
+          <textarea class="form-control" name="content" data-editor-content required></textarea>
+        </label>
+        <label>
+          Description
+          <input class="form-control" name="description" data-editor-description>
+        </label>
+        <label class="checkbox-line">
+          <input type="checkbox" name="publish" data-editor-publish>
+          Publish
+        </label>
+        <div class="editor-actions">
+          <button class="btn btn-outline-primary" type="button" data-open-image-picker>Images</button>
+          <button class="btn btn-primary" type="submit">Save</button>
+        </div>
+      </form>
+    </main>
+
+    <dialog class="image-dialog" data-image-dialog>
+      <form method="dialog" class="dialog-head">
+        <strong>Images</strong>
+        <button class="btn btn-sm btn-outline-secondary" type="submit">Close</button>
+      </form>
+      <div class="image-grid" data-image-grid></div>
+    </dialog>
+
+    <div class="toast" data-toast hidden></div>
+    <script src="/web/assets/bootstrap.bundle.min.js"></script>
+    <script src="/web/assets/textus-widgets.js"></script>
+    <script src="/web/blog/assets/blog.js"></script>
+  </body>
+</html>

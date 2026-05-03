@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>My Blog Post</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body>
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+        <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+        <nav class="d-flex align-items-center gap-3">
+          <a class="nav-link" href="/web/blog/userblogs">My posts</a>
+          <a class="btn btn-sm btn-outline-primary" href="/web/blog/update?id=${result.body.shortid}">Edit page</a>
+        </nav>
+      </div>
+    </header>
+    <main class="container py-4">
+      <article class="blog-article">
+        <textus:record-card source="result.body" title="title" subtitle="slug" columns="post_status:Status,aliveness:Aliveness,updated_at:Updated"></textus:record-card>
+        <textus:html-field source="result.body" field="content" class="article-body mt-4"></textus:html-field>
+      </article>
+      <section class="edit-shell mt-5">
+        <h2 class="h4">Edit this post</h2>
+        <form class="editor-form editor-page-form" action="/form/blog-component/blog/save-editor-post" method="post">
+          <input type="hidden" name="textus.form.page" value="update">
+          <input type="hidden" name="id" value="${result.body.shortid}">
+          <input type="hidden" name="publish" value="${result.body.post_status}">
+          <label>
+            Slug
+            <input class="form-control" name="slug" value="${result.body.slug}">
+            <span class="form-text">Optional URL name. Leave blank to keep the current slug.</span>
+          </label>
+          <label>
+            Title
+            <input class="form-control" name="title" value="${result.body.title}" required>
+          </label>
+          <label>
+            Content
+            <textarea class="form-control" name="content" required>${result.body.content}</textarea>
+          </label>
+          <label>
+            Description
+            <input class="form-control" name="description" value="${result.body.description}">
+          </label>
+          <div class="editor-actions">
+            <button class="btn btn-primary" type="submit">Save</button>
+            <a class="btn btn-outline-secondary" href="/web/blog/userblogs">Back to my posts</a>
+          </div>
+        </form>
+      </section>
+    </main>
+  </body>
+</html>

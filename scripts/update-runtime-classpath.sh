@@ -6,10 +6,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/cncf-common.sh"
 
 mkdir -p "$(dirname "$CNCF_RUNTIME_CLASSPATH_FILE")"
-classpath="$(
+sbt_output="$(
   cd "$PROJECT_ROOT"
-  sbt --batch 'export Runtime / fullClasspath' | awk '/^\// { print; exit }'
+  sbt --batch 'export Runtime / fullClasspath'
 )"
+classpath="$(printf '%s\n' "$sbt_output" | awk '/^\// { print; exit }')"
 
 if [[ -z "$classpath" ]]; then
   echo "Failed to resolve Runtime / fullClasspath." >&2

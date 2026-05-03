@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>My Posts - Results</title>
+    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
+    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
+    <link rel="stylesheet" href="/web/blog/assets/blog.css">
+  </head>
+  <body>
+    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+      <div class="container-fluid">
+        <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+        <nav class="d-flex align-items-center gap-3">
+          <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
+          <a class="btn btn-sm btn-primary" href="/web/blog/new">New post</a>
+        </nav>
+      </div>
+    </header>
+    <main class="container py-4">
+      <form class="search-form mb-4" action="/form/blog-component/blog/search-my-posts" method="post">
+        <input type="hidden" name="textus.form.page" value="userblogs">
+        <input type="hidden" name="limit" value="100">
+        <input class="form-control" type="search" name="text" value="${form.text}" placeholder="Search my posts" autocomplete="off">
+        <button class="btn btn-primary" type="submit">Search</button>
+      </form>
+      <textus:card-list
+        source="result.body"
+        title="title"
+        subtitle="slug"
+        columns="title:Title,slug:Slug,post_status:Status,aliveness:Aliveness,updated_at:Updated"
+        detail-href="/form/blog-component/blog/get-my-post/result"
+        detail-param-id="{shortid}"
+        detail-param-textus.form.page="userpost"
+        detail-label="Review / edit"></textus:card-list>
+    </main>
+  </body>
+</html>

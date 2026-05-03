@@ -14,10 +14,12 @@ This model keeps the image binding pattern explicit:
 - CNCF Blob metadata stores image metadata.
 - CNCF BlobAttachment Association links BlogPost to one or more image Blobs by
   role.
-- `BlogPost.authorAccountId` ties blog authoring to a user account.
-- `BlogPost` supports draft, published, and inactive states.
+- SimpleEntity security attributes tie blog authoring to the current user.
+- SimpleEntity lifecycle attributes support draft, published, and inactive
+  states.
 - Public blog read/search exposes published active posts.
-- `BlogPost.content` stores the canonical HTML article fragment.
+- `BlogPost` uses SimpleEntity `name` as its URL/SEO slug and
+  `descriptiveAttributes.content` as the canonical HTML article fragment.
 - `ImportPostTree` accepts a local-previewable HTML file tree archive and uses
   CNCF standard HTML tree values to extract article content.
 - `BlogInlineImage` tracks images discovered from `img` tags in article content.
@@ -101,6 +103,10 @@ entity-create
 
 BlogPost
 
+##### VISIBILITY
+
+public
+
 ##### INPUT
 
 ###### TYPE
@@ -127,6 +133,10 @@ entity-load
 
 BlogPost
 
+##### VISIBILITY
+
+public
+
 ##### INPUT
 
 ###### TYPE
@@ -144,6 +154,14 @@ BlogPostResult
 ##### TYPE
 
 QUERY
+
+##### ENTITY
+
+BlogPost
+
+##### VISIBILITY
+
+owner
 
 ##### INPUT
 
@@ -171,6 +189,10 @@ entity-search
 
 BlogPost
 
+##### VISIBILITY
+
+public
+
 ##### INPUT
 
 ###### TYPE
@@ -189,6 +211,14 @@ SearchBlogPostsResult
 
 QUERY
 
+##### ENTITY
+
+BlogPost
+
+##### VISIBILITY
+
+owner
+
 ##### INPUT
 
 ###### TYPE
@@ -206,6 +236,14 @@ SearchBlogPostsResult
 ##### TYPE
 
 QUERY
+
+##### ENTITY
+
+BlogPost
+
+##### VISIBILITY
+
+public
 
 ##### INPUT
 
@@ -339,28 +377,27 @@ extends = ["SimpleEntity"]
 
 ### DESCRIPTION
 
-Blog article entity. `authorAccountId` references the user account that owns
-the draft. `content` stores the canonical HTML article fragment extracted from
-full HTML input or accepted directly by `registerPost`. Images are represented
-by CNCF BlobAttachment Association rows whose role identifies primary, cover,
-thumbnail, gallery, or inline use. Inline `img` tag occurrences are tracked by
-`BlogInlineImage`.
+Blog article entity. Ownership is represented by SimpleEntity security
+attributes. `name` stores the URL/SEO slug, and
+`descriptiveAttributes.content` stores the canonical HTML article fragment
+extracted from full HTML input or accepted directly by `registerPost`. Images
+are represented by CNCF BlobAttachment Association rows whose role identifies
+primary, cover, thumbnail, gallery, or inline use. Inline `img` tag occurrences
+are tracked by `BlogInlineImage`.
 
-Public read/search should expose only posts whose draft status is published and
-whose active status is active. Draft and inactive posts remain author/admin
-surfaces.
+Public read/search should expose only posts whose SimpleEntity lifecycle is
+`postStatus = published` and `aliveness = alive`. Draft and inactive posts
+remain author/admin surfaces.
+
+No Blog-specific persistent attributes are required. The article slug, title,
+content, lifecycle state, owner, and security are inherited from SimpleEntity
+attributes.
 
 ### ATTRIBUTE
 
-| name            | type     | multiplicity | web-label      | web-placeholder |
-|-----------------+----------+--------------+----------------+-----------------|
-| id              | entityid | 1            | ID             |                 |
-| slug            | string   | 1            | Slug           | release-note    |
-| title           | string   | 1            | Title          | Release note    |
-| content         | string   | 1            | Content        | HTML fragment   |
-| authorAccountId | entityid | 1            | Author account |                 |
-| draftStatus     | string   | 1            | Draft status   | Draft           |
-| activeStatus    | string   | 1            | Active status  | Active          |
+| name     | type   | multiplicity | label  | derived |
+|----------+--------+--------------+--------+---------|
+| authorId | string | ?            | Author | ownerId |
 
 ## BlogInlineImage
 
@@ -485,7 +522,6 @@ image paths, and calls `RegisterBlogPost`.
 | archiveBlobId   | entityid | ?            |
 | treeRootPath    | string   | ?            |
 | entryHtmlPath   | string   | ?            |
-| authorAccountId | entityid | 1            |
 | publish         | boolean  | ?            |
 
 ## RegisterBlogPost
@@ -503,7 +539,6 @@ Lower-level bulk registration command. `content` is a normalized HTML fragment.
 | slug            | string              | 1            |
 | title           | string              | ?            |
 | content         | string              | 1            |
-| authorAccountId | entityid            | 1            |
 | publish         | boolean             | ?            |
 | description     | string              | ?            |
 | canonicalPath   | string              | ?            |
@@ -522,7 +557,7 @@ client-supplied author account ids are ignored.
 | name        | type     | multiplicity |
 |-------------+----------+--------------|
 | id          | entityid | ?            |
-| slug        | string   | 1            |
+| slug        | string   | ?            |
 | title       | string   | 1            |
 | content     | string   | 1            |
 | description | string   | ?            |
@@ -534,12 +569,8 @@ client-supplied author account ids are ignored.
 
 | name            | type     | multiplicity |
 |-----------------+----------+--------------|
-| slug            | string   | 1            |
 | title           | string   | 1            |
 | content         | string   | 1            |
-| authorAccountId | entityid | 1            |
-| draftStatus     | string   | 1            |
-| activeStatus    | string   | 1            |
 
 ## PublishBlogPost
 
@@ -596,13 +627,11 @@ managed image bindings.
 
 ### ATTRIBUTE
 
-| name         | type   | multiplicity |
-|--------------+--------+--------------|
-| draftStatus  | string | ?            |
-| activeStatus | string | ?            |
-| text         | string | ?            |
-| offset       | int    | ?            |
-| limit        | int    | ?            |
+| name   | type   | multiplicity |
+|--------+--------+--------------|
+| text   | string | ?            |
+| offset | int    | ?            |
+| limit  | int    | ?            |
 
 ## SearchMyBlogPosts
 

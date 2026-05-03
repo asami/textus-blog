@@ -30,4 +30,4 @@ CNCF_LAUNCHER_CACHE="${CNCF_LAUNCHER_CACHE:-$PROJECT_ROOT/.cache/coursier}"
 CNCF_RUNTIME_CLASSPATH_FILE="${CNCF_RUNTIME_CLASSPATH_FILE:-$PROJECT_ROOT/target/cncf.d/runtime-classpath.txt}"
 SIMPLEMODELING_REPOSITORY="${SIMPLEMODELING_REPOSITORY:-https://www.simplemodeling.org/maven}"
 
-CNCF_COMMON_ARGS=(--discover=classes)
+CNCF_COMMON_ARGS=(--component-dev-dir "$PROJECT_ROOT")
