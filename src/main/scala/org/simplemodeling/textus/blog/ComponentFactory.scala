@@ -415,6 +415,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       content = normalized.normalizedText
       explicitSlug = _string(record, "slug")
       contentReferences = normalized.references
+      _ <- content_validate_references(contentReferences)
       publish = _boolean(record, "publish").getOrElse(false)
       saved <- target match {
         case Some(post) =>
@@ -426,8 +427,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               securityAttributes = _blog_security(owner, publish)
             )
             updated <- exec_from(_with_blog_visibility(updated0, publish, active = true))
-            inlineCount <- _sync_content_references(updated.id, contentReferences)
             _ <- entity_save(updated)
+            inlineCount <- _recover_with(_sync_content_references(updated.id, contentReferences)) { conclusion =>
+              entity_save(post).flatMap { _ =>
+                _ignore_failure(_sync_content_references(post.id, post.contentAttributes.references)).flatMap { _ =>
+                  exec_from(Consequence.Failure[Int](conclusion))
+                }
+              }
+            }
           } yield (updated.id, updated.toRecord(), inlineCount)
         case None =>
           for {
@@ -446,7 +453,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               contextualAttribute = ContextualAttributes()
             )
             created <- _create_blog_post(post)
-            inlineCount <- _sync_content_references(created.id, contentReferences)
+            inlineCount <- _cleanup_created_blog_post_on_failure(created.id) {
+              _sync_content_references(created.id, contentReferences)
+            }
           } yield (created.id, created.record.getOrElse(post.toRecord()), inlineCount)
       }
     } yield OperationResponse(
@@ -572,15 +581,20 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         )
       )
       post <- _blog_post(record, normalized.normalizedText, normalized.references)
+      _ <- content_validate_references(normalized.references)
       created <- _create_blog_post(post)
       postId = created.id
-      entityImages <- _create_entity_images(postId, entityImageSpecs, treeRoot)
-      inline <- _sync_content_references(postId, normalized.references)
+      result <- _cleanup_created_blog_post_on_failure(postId) {
+        for {
+          inline <- _sync_content_references(postId, normalized.references)
+          entityImages <- _create_entity_images(postId, entityImageSpecs, treeRoot)
+        } yield (entityImages, inline)
+      }
     } yield {
       OperationResponse(
         _post_response_record(created.toRecord, created.id) ++ Record.dataAuto(
-          "entityImageCount" -> entityImages.size,
-          "inlineImageCount" -> inline
+          "entityImageCount" -> result._1.size,
+          "inlineImageCount" -> result._2
         )
       )
     }
@@ -674,6 +688,37 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ): Int =
     references.count(x => x.elementKind.contains("img") && x.attributeName.contains("src"))
 
+  private def _cleanup_created_blog_post_on_failure[A](
+    postId: EntityId
+  )(
+    program: ExecUowM[A]
+  ): ExecUowM[A] =
+    _recover_with(program) { conclusion =>
+      _ignore_failure(_delete_existing_blob_associations(postId)).flatMap { _ =>
+        _ignore_failure(entity_delete(postId)).flatMap { _ =>
+          exec_from(Consequence.Failure[A](conclusion))
+        }
+      }
+    }
+
+  private def _recover_with[A](
+    program: ExecUowM[A]
+  )(f: Conclusion => ExecUowM[A]): ExecUowM[A] =
+    ConsequenceT(program.value.flatMap {
+      case Consequence.Success(value) =>
+        Free.pure(Consequence.Success(value))
+      case Consequence.Failure(conclusion) =>
+        f(conclusion).value
+    })
+
+  private def _ignore_failure[A](
+    program: ExecUowM[A]
+  ): ExecUowM[Unit] =
+    ConsequenceT(program.value.map {
+      case Consequence.Success(_) => Consequence.unit
+      case Consequence.Failure(_) => Consequence.unit
+    })
+
   private def _delete_existing_inline_associations(postId: EntityId): ExecUowM[Unit] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext
     val repository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
@@ -682,6 +727,21 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       sourceEntityId = Some(_association_source_id(postId)),
       targetKind = Some("blob"),
       role = Some("inline")
+    ))).flatMap { associations =>
+      associations.foldLeft(exec_pure(())) {
+        case (z, association) =>
+          z.flatMap(_ => exec_from(_delete_association_if_present(repository, association)))
+      }
+    }
+  }
+
+  private def _delete_existing_blob_associations(postId: EntityId): ExecUowM[Unit] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    val repository = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+    exec_from(repository.list(AssociationFilter(
+      domain = AssociationDomain.BlobAttachment,
+      sourceEntityId = Some(_association_source_id(postId)),
+      targetKind = Some("blob")
     ))).flatMap { associations =>
       associations.foldLeft(exec_pure(())) {
         case (z, association) =>
