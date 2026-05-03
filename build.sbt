@@ -2,21 +2,19 @@ import org.goldenport.cozy.CozyPlugin.autoImport._
 import sbt.Keys.*
 
 val scala3Version = "3.3.7"
-def sampleVersion(envName: String, fileName: String, fallback: String): String =
+def projectVersion(envName: String, fileName: String, fallback: String): String =
   sys.env.get(envName)
     .orElse {
-      sys.env.get("CNCF_SAMPLES_ROOT").flatMap { root =>
-        val versionFile = file(root) / "versions" / fileName
-        if (versionFile.isFile)
-          Some(IO.read(versionFile).trim).filter(_.nonEmpty)
-        else
-          None
-      }
+      val versionFile = file("versions") / fileName
+      if (versionFile.isFile)
+        Some(IO.read(versionFile).trim).filter(_.nonEmpty)
+      else
+        None
     }
     .getOrElse(fallback)
 
-val cncfVersion = sampleVersion("CNCF_VERSION", "cncf-version.conf", "0.4.6-SNAPSHOT")
-val simpleModelingModelVersion = sampleVersion("SIMPLEMODELING_MODEL_VERSION", "simplemodeling-model-version.conf", "0.1.6-SNAPSHOT")
+val cncfVersion = projectVersion("CNCF_VERSION", "cncf-version.conf", "0.4.6-SNAPSHOT")
+val simpleModelingModelVersion = projectVersion("SIMPLEMODELING_MODEL_VERSION", "simplemodeling-model-version.conf", "0.1.6-SNAPSHOT")
 val cncfCollaboratorApiVersion = "0.1.0"
 
 lazy val root = project

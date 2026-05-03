@@ -20,7 +20,7 @@ import org.goldenport.cncf.id.TextusUrn
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
 import org.goldenport.cncf.security.SecuritySubject
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
-import org.goldenport.datatype.{ContentType, FileBundle}
+import org.goldenport.datatype.{ContentType, FileBundle, MimeType}
 import org.goldenport.datatype.ObjectId
 import org.goldenport.datatype.{I18nText, Name as GpName}
 import org.goldenport.http.{HttpResponse, HttpStatus}
@@ -29,7 +29,7 @@ import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
 import org.simplemodeling.model.statemachine.{Aliveness, PostStatus}
-import org.simplemodeling.model.value.{NameAttributes, DescriptiveAttributes, ContentAttributes, ContentReferenceOccurrence, LifecycleAttributes, PublicationAttributes, ResourceAttributes, AuditAttributes, MediaAttributes, ContextualAttributes, SecurityAttributes}
+import org.simplemodeling.model.value.{NameAttributes, DescriptiveAttributes, ContentAttributes, ContentMarkup, ContentReferenceOccurrence, LifecycleAttributes, PublicationAttributes, ResourceAttributes, AuditAttributes, MediaAttributes, ContextualAttributes, SecurityAttributes}
 import org.simplemodeling.textus.blog.entity.BlogPost
 import org.simplemodeling.textus.blog.entity.create.{
   BlogPost as BlogPostCreate
@@ -423,7 +423,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             slug <- explicitSlug.map(_unique_blog_slug(_, Some(post.id))).getOrElse(exec_pure(_post_slug(post)))
             updated0 = post.copy(
               nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withName(slug).withTitle(title).build(),
-              contentAttributes = org.simplemodeling.model.value.ContentAttributes.Builder(post.contentAttributes).withContent(content).withReferences(contentReferences).build(),
+              contentAttributes = _html_content_attributes(
+                org.simplemodeling.model.value.ContentAttributes.Builder(post.contentAttributes),
+                content,
+                contentReferences
+              ),
               securityAttributes = _blog_security(owner, publish)
             )
             updated <- exec_from(_with_blog_visibility(updated0, publish, active = true))
@@ -443,7 +447,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               id = None,
               nameAttributes = NameAttributes.Builder().withName(identity.slug).withTitle(title).build(),
               descriptiveAttributes = DescriptiveAttributes.empty,
-              contentAttributes = ContentAttributes.Builder().withContent(content).withReferences(contentReferences).build(),
+              contentAttributes = _html_content_attributes(
+                ContentAttributes.Builder(),
+                content,
+                contentReferences
+              ),
               lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
               publicationAttributes = PublicationAttributes(None, None, None, None, None),
               securityAttributes = _blog_security(owner, publish),
@@ -833,7 +841,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         id = None,
         nameAttributes = NameAttributes.Builder().withName(identity.slug).withTitle(t).build(),
         descriptiveAttributes = DescriptiveAttributes.empty,
-        contentAttributes = ContentAttributes.Builder().withContent(normalizedContent).withReferences(contentReferences).build(),
+        contentAttributes = _html_content_attributes(
+          ContentAttributes.Builder(),
+          normalizedContent,
+          contentReferences
+        ),
         lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
         publicationAttributes = PublicationAttributes(None, None, None, None, None),
         securityAttributes = _blog_security(owner, publish),
@@ -844,6 +856,19 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       )
     } yield post
   }
+
+  private def _html_content_attributes(
+    builder: ContentAttributes.Builder,
+    content: String,
+    references: Vector[ContentReferenceOccurrence]
+  ): ContentAttributes =
+    builder
+      .withContent(content)
+      .withMimeType(MimeType.TEXT_HTML)
+      .withCharset(StandardCharsets.UTF_8)
+      .withMarkup(ContentMarkup.HtmlFragment)
+      .withReferences(references)
+      .build()
 
   private def _blob_association(
     postId: EntityId,
@@ -1487,7 +1512,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       for {
         projection <- _image_projection(post.id)
         base = post.toRecord()
-        rendered <- _render_public_content(_string(base, "content"))
+        rendered <- _render_public_content(post.contentAttributes)
       } yield {
         val representative = projection.representativeImage
         base ++ rendered.map("content" -> _).map(Record.dataAuto(_)).getOrElse(Record.empty) ++ Record.dataAuto(
@@ -1501,16 +1526,16 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         )
       }
 
-    private def _render_public_content(content: Option[String]): Consequence[Option[String]] =
-      content match {
-        case Some(value) =>
+    private def _render_public_content(content: ContentAttributes): Consequence[Option[String]] =
+      content.content match {
+        case Some(_) =>
           given org.goldenport.cncf.context.ExecutionContext = executionContext
           component
             .map(Consequence.success)
             .getOrElse(Consequence.serviceUnavailable("BlogComponent is not attached to a subsystem component"))
             .flatMap { component =>
-            BlobInlineImageWorkflow(component).renderTextusBlobUrns(value).map(Some(_))
-          }
+              ContentRenderWorkflow(component).renderHtml(content).map(result => Some(result.html))
+            }
         case None =>
           Consequence.success(None)
       }
