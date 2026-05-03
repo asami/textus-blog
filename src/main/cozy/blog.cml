@@ -19,7 +19,7 @@ This model keeps the image binding pattern explicit:
   states.
 - Public blog read/search exposes published active posts.
 - `BlogPost` uses SimpleEntity `name` as its URL/SEO slug and
-  `descriptiveAttributes.content` as the canonical HTML article fragment.
+  `contentAttributes.content` as the canonical HTML article fragment.
 - `ImportPostTree` accepts a local-previewable HTML file tree archive and uses
   CNCF standard HTML tree values to extract article content.
 - `BlogInlineImage` tracks images discovered from `img` tags in article content.
@@ -379,7 +379,7 @@ extends = ["SimpleEntity"]
 
 Blog article entity. Ownership is represented by SimpleEntity security
 attributes. `name` stores the URL/SEO slug, and
-`descriptiveAttributes.content` stores the canonical HTML article fragment
+`contentAttributes.content` stores the canonical HTML article fragment
 extracted from full HTML input or accepted directly by `registerPost`. Images
 are represented by CNCF BlobAttachment Association rows whose role identifies
 primary, cover, thumbnail, gallery, or inline use. Inline `img` tag occurrences

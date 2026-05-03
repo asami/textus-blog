@@ -29,7 +29,7 @@ import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
 import org.simplemodeling.model.statemachine.{Aliveness, PostStatus}
-import org.simplemodeling.model.value.{NameAttributes, DescriptiveAttributes, LifecycleAttributes, PublicationAttributes, ResourceAttributes, AuditAttributes, MediaAttributes, ContextualAttributes, SecurityAttributes}
+import org.simplemodeling.model.value.{NameAttributes, DescriptiveAttributes, ContentAttributes, ContentReferenceOccurrence, LifecycleAttributes, PublicationAttributes, ResourceAttributes, AuditAttributes, MediaAttributes, ContextualAttributes, SecurityAttributes}
 import org.simplemodeling.textus.blog.entity.{BlogInlineImage, BlogPost}
 import org.simplemodeling.textus.blog.entity.create.{
   BlogInlineImage as BlogInlineImageCreate,
@@ -416,6 +416,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       explicitSlug = _string(record, "slug")
       inlineSpecs <- exec_from(_inline_image_specs_from_occurrences(normalized.occurrences))
       _ <- exec_from(_validate_editor_inline_specs(inlineSpecs))
+      contentReferences = _content_references_from_occurrences(normalized.occurrences)
       publish = _boolean(record, "publish").getOrElse(false)
       saved <- target match {
         case Some(post) =>
@@ -423,7 +424,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             slug <- explicitSlug.map(_unique_blog_slug(_, Some(post.id))).getOrElse(exec_pure(_post_slug(post)))
             updated0 = post.copy(
               nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withName(slug).withTitle(title).build(),
-              descriptiveAttributes = org.simplemodeling.model.value.DescriptiveAttributes.Builder(post.descriptiveAttributes).withContent(content).build(),
+              contentAttributes = org.simplemodeling.model.value.ContentAttributes.Builder(post.contentAttributes).withContent(content).withReferences(contentReferences).build(),
               securityAttributes = _blog_security(owner, publish)
             )
             updated <- exec_from(_with_blog_visibility(updated0, publish, active = true))
@@ -435,7 +436,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             post: BlogPostCreate = BlogPostCreate(
               id = None,
               nameAttributes = NameAttributes.Builder().withName(identity.slug).withTitle(title).build(),
-              descriptiveAttributes = DescriptiveAttributes.Builder().withContent(content).build(),
+              descriptiveAttributes = DescriptiveAttributes.empty,
+              contentAttributes = ContentAttributes.Builder().withContent(content).withReferences(contentReferences).build(),
               lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
               publicationAttributes = PublicationAttributes(None, None, None, None, None),
               securityAttributes = _blog_security(owner, publish),
@@ -704,6 +706,31 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       createdBlob = spec.existingBlobId.isEmpty
     )
 
+  private def _content_references_from_occurrences(
+    occurrences: Vector[InlineImageOccurrence]
+  ): Vector[ContentReferenceOccurrence] =
+    occurrences.map(_content_reference_from_occurrence)
+
+  private def _content_reference_from_occurrence(
+    occurrence: InlineImageOccurrence
+  ): ContentReferenceOccurrence =
+    ContentReferenceOccurrence(
+      contentField = Some("content"),
+      markup = Some("html-fragment"),
+      elementKind = Some("img"),
+      attributeName = Some("src"),
+      occurrenceIndex = occurrence.index,
+      originalRef = Some(occurrence.originalSrc),
+      normalizedRef = Some(occurrence.normalizedSrc),
+      referenceKind = Some("blob"),
+      urn = Some(occurrence.normalizedSrc),
+      targetEntityId = Some(occurrence.blobId.value),
+      alt = occurrence.alt,
+      title = occurrence.title,
+      mediaType = Some("image"),
+      sortOrder = Some(occurrence.sortOrder)
+    )
+
   private def _sync_editor_inline_images(
     postId: EntityId,
     specs: Vector[BlogInlineImageSpec]
@@ -882,11 +909,13 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       identity <- _unique_blog_identity(s, None)
       t <- exec_from(_string(record, "title").map(Consequence.success).getOrElse(Consequence.success(identity.slug)))
       c <- exec_from(content)
+      refs <- exec_from(_content_reference_specs(record))
       owner <- exec_from(_current_owner_id())
       post = BlogPostCreate(
         id = None,
         nameAttributes = NameAttributes.Builder().withName(identity.slug).withTitle(t).build(),
-        descriptiveAttributes = DescriptiveAttributes.Builder().withContent(c).build(),
+        descriptiveAttributes = DescriptiveAttributes.empty,
+        contentAttributes = ContentAttributes.Builder().withContent(c).withReferences(refs).build(),
         lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
         publicationAttributes = PublicationAttributes(None, None, None, None, None),
         securityAttributes = _blog_security(owner, publish),
@@ -1075,7 +1104,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               "sortOrder" -> image.index
             )
           }
-        }
+        },
+      "contentReferences" -> normalizedInlineImages
+        .map(_.occurrences.map(_content_reference_record))
+        .getOrElse(Vector.empty)
     )
 
   private def _inline_image_record(occurrence: InlineImageOccurrence): Record =
@@ -1086,6 +1118,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       "titleText" -> occurrence.title,
       "sortOrder" -> occurrence.sortOrder
     )
+
+  private def _content_reference_record(occurrence: InlineImageOccurrence): Record =
+    _content_reference_from_occurrence(occurrence).toRecord()
 
   private def _entity_image_specs(record: Record): Consequence[Vector[BlogEntityImageSpec]] =
     _record_vector(record, "entityImages", "entity_images").foldLeft(Consequence.success(Vector.empty[BlogEntityImageSpec])) {
@@ -1107,6 +1142,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           else
             BlogInlineImageSpec.createC(item).map(xs :+ _)
         }
+    }
+
+  private def _content_reference_specs(record: Record): Consequence[Vector[ContentReferenceOccurrence]] =
+    _record_vector(record, "contentReferences", "content_references", "references").foldLeft(Consequence.success(Vector.empty[ContentReferenceOccurrence])) {
+      case (z, item) =>
+        z.flatMap(xs => ContentReferenceOccurrence.createC(item).map(xs :+ _))
     }
 
   private def _has_any(record: Record, names: String*): Boolean =
