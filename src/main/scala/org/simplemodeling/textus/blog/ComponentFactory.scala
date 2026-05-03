@@ -30,12 +30,11 @@ import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
 import org.simplemodeling.model.statemachine.{Aliveness, PostStatus}
 import org.simplemodeling.model.value.{NameAttributes, DescriptiveAttributes, ContentAttributes, ContentReferenceOccurrence, LifecycleAttributes, PublicationAttributes, ResourceAttributes, AuditAttributes, MediaAttributes, ContextualAttributes, SecurityAttributes}
-import org.simplemodeling.textus.blog.entity.{BlogInlineImage, BlogPost}
+import org.simplemodeling.textus.blog.entity.BlogPost
 import org.simplemodeling.textus.blog.entity.create.{
-  BlogInlineImage as BlogInlineImageCreate,
   BlogPost as BlogPostCreate
 }
-import org.simplemodeling.textus.blog.value.{BlogEntityImageSpec, BlogInlineImageSpec}
+import org.simplemodeling.textus.blog.value.BlogEntityImageSpec
 import org.goldenport.cncf.association.AssociationRepository.given
 import org.goldenport.cncf.blob.BlobRepository.given
 
@@ -80,7 +79,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             acceptsArchiveBlobId = true,
             createsAttachment = true,
             roles = BlogComponentRuntimeFactory.ImageRoles,
-            parameters = Vector("fileBundle", "archiveBlobId", "entityImages", "inlineImages"),
+            parameters = Vector("fileBundle", "archiveBlobId", "entityImages"),
             sourceEntityIdMode = CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult
           )))
         case definition if definition.name == "registerPost" =>
@@ -88,9 +87,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             acceptsExistingBlobId = true,
             createsAttachment = true,
             roles = BlogComponentRuntimeFactory.ImageRoles,
-            parameters = Vector("entityImages.existingBlobId", "inlineImages.existingBlobId"),
+            parameters = Vector("entityImages.existingBlobId"),
             sourceEntityIdMode = CmlOperationAssociationBinding.SourceEntityIdModeEntityCreateResult,
-            targetIdParameters = Vector("entityImages.existingBlobId", "inlineImages.existingBlobId")
+            targetIdParameters = Vector("entityImages.existingBlobId")
           )))
         case definition =>
           definition
@@ -186,8 +185,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             draft <- exec_from(BlogFileTreeImportSupport.normalizeTreeWithInlineImageUrls(source.root) { img =>
               Some(img.treePath.getOrElse(img.sourcePath))
             })
-            normalized <- blob_normalize_inline_images(
-              InlineImageContent(
+            normalized <- content_normalize_references(
+              ContentReferenceContent(
                 InlineImageMarkup.HtmlFragment,
                 draft.content,
                 Some(FileBundle.Directory(source.root))
@@ -401,12 +400,13 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   protected final def _save_editor_post(record: Record): ExecUowM[OperationResponse] =
     for {
+      _ <- exec_from(_reject_external_content_references(record))
       owner <- exec_from(_current_owner_id())
       target <- _optional_blog_post(record, "id")
       title <- exec_from(_required_string(record, "title"))
       rawContent <- exec_from(_required_string(record, "content"))
-      normalized <- blob_normalize_inline_images(
-        InlineImageContent(
+      normalized <- content_normalize_references(
+        ContentReferenceContent(
           InlineImageMarkup.HtmlFragment,
           rawContent,
           None
@@ -414,9 +414,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       )
       content = normalized.normalizedText
       explicitSlug = _string(record, "slug")
-      inlineSpecs <- exec_from(_inline_image_specs_from_occurrences(normalized.occurrences))
-      _ <- exec_from(_validate_editor_inline_specs(inlineSpecs))
-      contentReferences = _content_references_from_occurrences(normalized.occurrences)
+      contentReferences = normalized.references
       publish = _boolean(record, "publish").getOrElse(false)
       saved <- target match {
         case Some(post) =>
@@ -428,8 +426,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               securityAttributes = _blog_security(owner, publish)
             )
             updated <- exec_from(_with_blog_visibility(updated0, publish, active = true))
+            inlineCount <- _sync_content_references(updated.id, contentReferences)
             _ <- entity_save(updated)
-          } yield (updated.id, updated.toRecord())
+          } yield (updated.id, updated.toRecord(), inlineCount)
         case None =>
           for {
             identity <- _unique_blog_identity(explicitSlug.getOrElse(title), None)
@@ -447,12 +446,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               contextualAttribute = ContextualAttributes()
             )
             created <- _create_blog_post(post)
-          } yield (created.id, created.record.getOrElse(post.toRecord()))
+            inlineCount <- _sync_content_references(created.id, contentReferences)
+          } yield (created.id, created.record.getOrElse(post.toRecord()), inlineCount)
       }
-      inlineCount <- _sync_editor_inline_images(saved._1, inlineSpecs)
     } yield OperationResponse(
       _post_response_record(saved._2, saved._1) ++ Record.dataAuto(
-        "inlineImageCount" -> inlineCount
+        "inlineImageCount" -> saved._3
       )
     )
 
@@ -561,26 +560,33 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     treeRoot: Option[Path]
   ): ExecUowM[OperationResponse] =
     for {
+      _ <- exec_from(_reject_external_content_references(record))
       entityImageSpecs <- exec_from(_entity_image_specs(record))
-      inlineImageSpecs <- exec_from(_inline_image_specs(record))
-      _ <- exec_from(_validate_registration_image_specs(entityImageSpecs, inlineImageSpecs, treeRoot))
-      post <- _blog_post(record)
+      _ <- exec_from(_validate_registration_image_specs(entityImageSpecs, treeRoot))
+      rawContent <- exec_from(_required_string(record, "content"))
+      normalized <- content_normalize_references(
+        ContentReferenceContent(
+          InlineImageMarkup.HtmlFragment,
+          rawContent,
+          treeRoot.map(FileBundle.Directory(_))
+        )
+      )
+      post <- _blog_post(record, normalized.normalizedText, normalized.references)
       created <- _create_blog_post(post)
       postId = created.id
       entityImages <- _create_entity_images(postId, entityImageSpecs, treeRoot)
-      inlineImages <- _create_inline_images(postId, inlineImageSpecs, treeRoot)
+      inline <- _sync_content_references(postId, normalized.references)
     } yield {
       OperationResponse(
         _post_response_record(created.toRecord, created.id) ++ Record.dataAuto(
           "entityImageCount" -> entityImages.size,
-          "inlineImageCount" -> inlineImages.size
+          "inlineImageCount" -> inline
         )
       )
     }
 
   private def _validate_registration_image_specs(
     entityImages: Vector[BlogEntityImageSpec],
-    inlineImages: Vector[BlogInlineImageSpec],
     treeRoot: Option[Path]
   ): Consequence[Unit] =
     treeRoot match {
@@ -590,11 +596,6 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         entityImages.zipWithIndex.collectFirst {
           case (spec, index) if spec.existingBlobId.isEmpty =>
             Consequence.argumentInvalid(s"registerPost entityImages[$index] requires existingBlobId; local path payloads must be imported through importPostTree")
-        }.orElse {
-          inlineImages.zipWithIndex.collectFirst {
-            case (spec, index) if spec.existingBlobId.isEmpty =>
-              Consequence.argumentInvalid(s"registerPost inlineImages[$index] requires existingBlobId; local path payloads must be imported through importPostTree")
-          }
         }.getOrElse(Consequence.unit)
     }
 
@@ -660,152 +661,18 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         }
     }
 
-  private def _create_inline_images(
+  private def _sync_content_references(
     postId: EntityId,
-    specs: Vector[BlogInlineImageSpec],
-    treeRoot: Option[Path]
-  ): ExecUowM[Vector[BlogInlineImage]] =
-    for {
-      owner <- exec_from(_current_owner_id())
-      plans <- specs.zipWithIndex.foldLeft(exec_pure(Vector.empty[(BlogInlineImageSpec, Int, EntityId, InlineImageOccurrence)])) {
-        case (z, (spec, index)) =>
-          z.flatMap { plans =>
-            for {
-              blobId <- _ensure_inline_blob(spec, treeRoot, index)
-              occurrence = _inline_occurrence(blobId, spec, index)
-            } yield plans :+ (spec, index, blobId, occurrence)
-          }
-      }
-      _ <- blob_attach_inline_images(_association_source_id(postId), plans.map(_._4))
-      images <- plans.foldLeft(exec_pure(Vector.empty[BlogInlineImage])) {
-        case (z, (spec, index, blobId, _)) =>
-          z.flatMap { images =>
-            for {
-              inlineCreate <- exec_from(_blog_inline_image(postId, Some(blobId), spec, index, owner))
-              created <- _create_blog_inline_image(inlineCreate)
-              image <- exec_from(_created_blog_inline_image(created.id, created.record, postId, Some(blobId), spec, index, owner))
-            } yield images :+ image
-          }
-      }
-    } yield images
-
-  private def _inline_occurrence(
-    blobId: EntityId,
-    spec: BlogInlineImageSpec,
-    index: Int
-  ): InlineImageOccurrence =
-    InlineImageOccurrence(
-      index = index,
-      originalSrc = spec.clientId.orElse(spec.path).getOrElse(blobId.parts.entropy),
-      normalizedSrc = TextusUrn.blob(blobId.parts.entropy).print,
-      blobId = blobId,
-      alt = spec.altText,
-      title = spec.titleText,
-      sortOrder = spec.sortOrder.getOrElse(index),
-      sourceKind = InlineImageSourceKind.BlobContentUrl,
-      createdBlob = spec.existingBlobId.isEmpty
-    )
-
-  private def _content_references_from_occurrences(
-    occurrences: Vector[InlineImageOccurrence]
-  ): Vector[ContentReferenceOccurrence] =
-    occurrences.map(_content_reference_from_occurrence)
-
-  private def _content_reference_from_occurrence(
-    occurrence: InlineImageOccurrence
-  ): ContentReferenceOccurrence =
-    ContentReferenceOccurrence(
-      contentField = Some("content"),
-      markup = Some("html-fragment"),
-      elementKind = Some("img"),
-      attributeName = Some("src"),
-      occurrenceIndex = occurrence.index,
-      originalRef = Some(occurrence.originalSrc),
-      normalizedRef = Some(occurrence.normalizedSrc),
-      referenceKind = Some("blob"),
-      urn = Some(occurrence.normalizedSrc),
-      targetEntityId = Some(occurrence.blobId.value),
-      alt = occurrence.alt,
-      title = occurrence.title,
-      mediaType = Some("image"),
-      sortOrder = Some(occurrence.sortOrder)
-    )
-
-  private def _sync_editor_inline_images(
-    postId: EntityId,
-    specs: Vector[BlogInlineImageSpec]
+    references: Vector[ContentReferenceOccurrence]
   ): ExecUowM[Int] =
     for {
-      _ <- _delete_existing_inline_images(postId)
-      _ <- _delete_existing_inline_associations(postId)
-      images <- _create_inline_images(postId, specs, None)
-    } yield images.size
+      _ <- content_sync_inline_references(_association_source_id(postId), references)
+    } yield _inline_image_count(references)
 
-  private def _validate_editor_inline_specs(
-    specs: Vector[BlogInlineImageSpec]
-  ): Consequence[Unit] =
-    specs.foldLeft(Consequence.unit) {
-      case (z, spec) =>
-        z.flatMap { _ =>
-          spec.existingBlobId
-            .map(_verify_blob)
-            .getOrElse(Consequence.argumentInvalid("editor inline images require existing Blob ids"))
-        }
-    }
-
-  private def _delete_existing_inline_images(postId: EntityId): ExecUowM[Unit] =
-    _editor_inline_image_id_candidates(postId).foldLeft(exec_pure(())) {
-      case (z, id) =>
-        z.flatMap(_ =>
-          exec_from(_delete_entity_hard_if_present(id))
-        )
-    }
-
-  private def _delete_entity_hard_if_present(id: EntityId): Consequence[Unit] =
-    {
-      given org.goldenport.cncf.context.ExecutionContext = execution_context
-      EntityStore.standard().deleteHard(id).recoverWith {
-        case conclusion if _is_not_found(conclusion) => Consequence.unit
-        case conclusion => Consequence.Failure(conclusion)
-      }
-    }
-
-  private def _find_inline_images(postId: EntityId): ExecUowM[Vector[BlogInlineImage]] =
-    _blog_inline_image_collections.foldLeft(exec_pure(Vector.empty[BlogInlineImage])) {
-      case (z, collection) =>
-        z.flatMap { values =>
-          entity_search[BlogInlineImage](EntityQuery(
-            collection,
-            Query.plan(Record.empty),
-            EntitySearchScope.Store,
-            visibilityScope = Some(EntityVisibilityScope.Owner)
-          )).map(result => values ++ result.data)
-        }
-    }.map(_.map(_normalize_inline_image).filter(_.blogPostId == postId).sortBy(_.sortOrder).distinctBy(_.id))
-
-  private def _blog_inline_image_collections: Vector[EntityCollectionId] =
-    Vector(
-      _runtime_collection_id(BlogInlineImage.collectionId),
-      BlogInlineImage.collectionId
-    ).distinct
-
-  private def _normalize_inline_image(image: BlogInlineImage): BlogInlineImage =
-    image.copy(
-      blogPostId = _blog_post_id(image.blogPostId),
-      blobId = image.blobId.map(_with_collection(_, BlobRepository.CollectionId))
-    )
-
-  private def _inline_image_id_candidates(id: EntityId): Vector[EntityId] =
-    Vector(
-      id,
-      _with_collection(id, _runtime_collection_id(BlogInlineImage.collectionId)),
-      _with_collection(id, BlogInlineImage.collectionId)
-    ).distinct
-
-  private def _editor_inline_image_id_candidates(postId: EntityId): Vector[EntityId] =
-    (0 until 128).toVector.flatMap { index =>
-      _inline_image_id_candidates(_editor_inline_image_id(postId, index))
-    }.distinct
+  private def _inline_image_count(
+    references: Vector[ContentReferenceOccurrence]
+  ): Int =
+    references.count(x => x.elementKind.contains("img") && x.attributeName.contains("src"))
 
   private def _delete_existing_inline_associations(postId: EntityId): ExecUowM[Unit] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext
@@ -856,26 +723,6 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         } yield blobId
     }
 
-  private def _ensure_inline_blob(
-    spec: BlogInlineImageSpec,
-    treeRoot: Option[Path],
-    index: Int
-  ): ExecUowM[EntityId] =
-    spec.existingBlobId match {
-      case Some(id) =>
-        for {
-          _ <- exec_from(_verify_blob(id))
-        } yield id
-      case None if treeRoot.isEmpty =>
-        exec_from(Consequence.argumentInvalid("registerPost inlineImages require existingBlobId; local path payloads must be imported through importPostTree"))
-      case None =>
-        val objectKey = spec.path.orElse(spec.clientId).getOrElse(s"inline-$index")
-        val blobId = _blob_id(objectKey)
-        for {
-          _ <- _create_blob_if_local(blobId, spec.path, spec.contentType, treeRoot)
-        } yield blobId
-    }
-
   private def _create_blob_if_local(
     id: EntityId,
     path: Option[String],
@@ -900,22 +747,23 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     BlobRepository.entityStore().get(id).map(_ => ())
   }
 
-  private def _blog_post(record: Record): ExecUowM[BlogPostCreate] = {
+  private def _blog_post(
+    record: Record,
+    normalizedContent: String,
+    contentReferences: Vector[ContentReferenceOccurrence]
+  ): ExecUowM[BlogPostCreate] = {
     val slug = _required_string(record, "slug")
-    val content = _required_string(record, "content")
     val publish = _boolean(record, "publish").getOrElse(false)
     for {
       s <- exec_from(slug)
       identity <- _unique_blog_identity(s, None)
       t <- exec_from(_string(record, "title").map(Consequence.success).getOrElse(Consequence.success(identity.slug)))
-      c <- exec_from(content)
-      refs <- exec_from(_content_reference_specs(record))
       owner <- exec_from(_current_owner_id())
       post = BlogPostCreate(
         id = None,
         nameAttributes = NameAttributes.Builder().withName(identity.slug).withTitle(t).build(),
         descriptiveAttributes = DescriptiveAttributes.empty,
-        contentAttributes = ContentAttributes.Builder().withContent(c).withReferences(refs).build(),
+        contentAttributes = ContentAttributes.Builder().withContent(normalizedContent).withReferences(contentReferences).build(),
         lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
         publicationAttributes = PublicationAttributes(None, None, None, None, None),
         securityAttributes = _blog_security(owner, publish),
@@ -953,99 +801,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   private def _association_source_id(postId: EntityId): String =
     postId.value
 
-  private def _blog_inline_image(
-    postId: EntityId,
-    blobId: Option[EntityId],
-    spec: BlogInlineImageSpec,
-    index: Int,
-    owner: String
-  ): Consequence[BlogInlineImageCreate] =
-    BlogInlineImageCreate.createC(
-      Record.dataAuto(
-        "id" -> _editor_inline_image_id(postId, index),
-        "blogPostId" -> postId,
-        "sourceUrl" -> spec.path.orElse(spec.clientId).orElse(blobId.map(_.value)).getOrElse(s"inline-$index"),
-        "altText" -> spec.altText,
-        "titleText" -> spec.titleText,
-        "sortOrder" -> spec.sortOrder.getOrElse(index),
-        "synchronized" -> blobId.isDefined,
-        "ownerId" -> owner
-      )
-    )
-
-  private def _editor_inline_image_id(
-    postId: EntityId,
-    index: Int
-  ): EntityId =
-    EntityId(
-      postId.major,
-      postId.minor,
-      _runtime_collection_id(BlogInlineImage.collectionId),
-      postId.timestamp,
-      Some(s"${postId.parts.entropy}_inline_${index}")
-    )
-
-  private def _create_blog_inline_image(
-    image: BlogInlineImageCreate
-  ): ExecUowM[org.goldenport.cncf.entity.CreateResult[BlogInlineImageCreate]] = {
-    val persistent = new EntityPersistentCreate[BlogInlineImageCreate] {
-      def id(e: BlogInlineImageCreate): Option[EntityId] =
-        e.id.map(_with_collection(_, _runtime_collection_id(BlogInlineImage.collectionId)))
-
-      def collection(e: BlogInlineImageCreate): EntityCollectionId =
-        _runtime_collection_id(BlogInlineImage.collectionId)
-
-      def toRecord(e: BlogInlineImageCreate): Record =
-        e.toRecord()
-
-      override def toStoreRecord(e: BlogInlineImageCreate): Record =
-        e.toDataStore()
-
-      override def storeFieldName(logicalName: String): String =
-        summon[EntityPersistent[BlogInlineImage]].storeFieldName(logicalName)
-    }
-    entity_create(image)(using persistent)
-  }
-
-  private def _created_blog_inline_image(
-    id: EntityId,
-    record: Option[Record],
-    postId: EntityId,
-    blobId: Option[EntityId],
-    spec: BlogInlineImageSpec,
-    index: Int,
-    owner: String
-  ): Consequence[BlogInlineImage] =
-    record.map(BlogInlineImage.createC).getOrElse(
-      BlogInlineImage.createC(
-        Record.dataAuto(
-          "id" -> id,
-          "blogPostId" -> postId,
-          "blobId" -> blobId,
-          "sourceUrl" -> spec.path.orElse(spec.clientId).orElse(blobId.map(_.value)).getOrElse(s"inline-$index"),
-          "altText" -> spec.altText,
-          "titleText" -> spec.titleText,
-          "sortOrder" -> spec.sortOrder.getOrElse(index),
-          "synchronized" -> blobId.isDefined,
-          "ownerId" -> owner
-        )
-      )
-    ).map(_normalize_inline_image)
-
   private def _entity_image_attributes(spec: BlogEntityImageSpec): Map[String, String] =
     Vector(
       spec.caption.map("caption" -> _),
       spec.checksum.map("checksum" -> _),
       spec.path.map("sourcePath" -> _)
-    ).flatten.toMap
-
-  private def _inline_image_attributes(spec: BlogInlineImageSpec): Map[String, String] =
-    Vector(
-      spec.clientId.map("clientId" -> _),
-      spec.path.map("sourcePath" -> _),
-      spec.altText.map("altText" -> _),
-      spec.titleText.map("titleText" -> _),
-      spec.checksum.map("checksum" -> _)
     ).flatten.toMap
 
   private def _put_blob_payload(
@@ -1076,12 +836,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   protected final def _register_record(
     source: Record,
     draft: BlogRegistrationDraft,
-    normalizedInlineImages: Option[InlineImageNormalizeResult] = None
+    normalizedReferences: Option[ContentReferenceNormalizeResult] = None
   ): Record =
     Record.dataAuto(
       "slug" -> draft.slug.getOrElse(_slug_from_title(draft.title)),
       "title" -> draft.title,
-      "content" -> normalizedInlineImages.map(_.normalizedText).getOrElse(draft.content),
+      "content" -> normalizedReferences.map(_.normalizedText).getOrElse(draft.content),
       "publish" -> _boolean(source, "publish").getOrElse(false),
       "description" -> draft.description,
       "canonicalPath" -> draft.canonicalPath,
@@ -1092,35 +852,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           "sortOrder" -> image.sortOrder,
           "caption" -> image.caption
         )
-      },
-      "inlineImages" -> normalizedInlineImages
-        .map(_.occurrences.map(_inline_image_record))
-        .getOrElse {
-          draft.inlineImages.map { image =>
-            Record.dataAuto(
-              "path" -> image.treePath.getOrElse(image.sourcePath),
-              "altText" -> image.altText,
-              "titleText" -> image.titleText,
-              "sortOrder" -> image.index
-            )
-          }
-        },
-      "contentReferences" -> normalizedInlineImages
-        .map(_.occurrences.map(_content_reference_record))
-        .getOrElse(Vector.empty)
+      }
     )
 
-  private def _inline_image_record(occurrence: InlineImageOccurrence): Record =
-    Record.dataAuto(
-      "existingBlobId" -> occurrence.blobId,
-      "clientId" -> occurrence.originalSrc,
-      "altText" -> occurrence.alt,
-      "titleText" -> occurrence.title,
-      "sortOrder" -> occurrence.sortOrder
-    )
-
-  private def _content_reference_record(occurrence: InlineImageOccurrence): Record =
-    _content_reference_from_occurrence(occurrence).toRecord()
+  private def _reject_external_content_references(record: Record): Consequence[Unit] =
+    if (_has_any(record, "contentReferences", "content_references"))
+      Consequence.argumentInvalid("contentReferences is server-derived metadata and cannot be supplied as operation input")
+    else
+      Consequence.success(())
 
   private def _entity_image_specs(record: Record): Consequence[Vector[BlogEntityImageSpec]] =
     _record_vector(record, "entityImages", "entity_images").foldLeft(Consequence.success(Vector.empty[BlogEntityImageSpec])) {
@@ -1131,23 +870,6 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           else
             BlogEntityImageSpec.createC(item).map(xs :+ _)
         }
-    }
-
-  private def _inline_image_specs(record: Record): Consequence[Vector[BlogInlineImageSpec]] =
-    _record_vector(record, "inlineImages", "inline_images").foldLeft(Consequence.success(Vector.empty[BlogInlineImageSpec])) {
-      case (z, item) =>
-        z.flatMap { xs =>
-          if (_has_any(item, "existingImageId", "existing_image_id"))
-            Consequence.argumentInvalid("existingImageId is no longer supported; use existingBlobId")
-          else
-            BlogInlineImageSpec.createC(item).map(xs :+ _)
-        }
-    }
-
-  private def _content_reference_specs(record: Record): Consequence[Vector[ContentReferenceOccurrence]] =
-    _record_vector(record, "contentReferences", "content_references", "references").foldLeft(Consequence.success(Vector.empty[ContentReferenceOccurrence])) {
-      case (z, item) =>
-        z.flatMap(xs => ContentReferenceOccurrence.createC(item).map(xs :+ _))
     }
 
   private def _has_any(record: Record, names: String*): Boolean =
@@ -1463,26 +1185,6 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       case id: EntityId => id.value
       case other => Option(other).map(_.toString.trim).getOrElse("")
     }
-
-  private def _inline_image_specs_from_editor_content(content: String): Consequence[Vector[BlogInlineImageSpec]] = {
-    val records = BlogComponentRuntimeFactory.extractBlobContentImageIds(content).zipWithIndex.map { case (blobId, index) =>
-      Record.dataAuto(
-        "existingBlobId" -> blobId,
-        "clientId" -> blobId.display,
-        "sortOrder" -> index
-      )
-    }
-    _inline_image_specs(Record.dataAuto("inlineImages" -> records))
-  }
-
-  private def _inline_image_specs_from_occurrences(
-    occurrences: Vector[InlineImageOccurrence]
-  ): Consequence[Vector[BlogInlineImageSpec]] =
-    _inline_image_specs(
-      Record.dataAuto(
-        "inlineImages" -> occurrences.map(_inline_image_record)
-      )
-    )
 
   protected final def _list_image_blobs(record: Record): Consequence[Record] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext

@@ -10,7 +10,7 @@ import org.goldenport.Consequence
 
 /*
  * @since   Apr. 29, 2026
- * @version Apr. 29, 2026
+ * @version May.  3, 2026
  * @author  ASAMI, Tomoharu
  */
 final class BlogFileTreeImportSupportSpec extends AnyWordSpec with Matchers with GivenWhenThen {
@@ -48,7 +48,7 @@ final class BlogFileTreeImportSupportSpec extends AnyWordSpec with Matchers with
       draft.canonicalPath shouldBe Some("/meta/canonical")
       draft.content should include ("<h1>Article</h1>")
       draft.content should not include ("<html>")
-      draft.inlineImages.map(_.sourcePath) shouldBe Vector("./images/a.jpg")
+      draft.contentImages.map(_.sourcePath) shouldBe Vector("./images/a.jpg")
       draft.entityImages.map(_.role) shouldBe Vector("thumbnail")
     }
 
@@ -102,7 +102,7 @@ final class BlogFileTreeImportSupportSpec extends AnyWordSpec with Matchers with
       Then("the stored fragment contains public URLs while drafts keep source paths")
       draft.content should include ("""src="/web/blob/content/0"""")
       draft.content should include ("""src="/web/blob/content/1"""")
-      draft.inlineImages.map(_.sourcePath) shouldBe Vector("a.png", "b.png")
+      draft.contentImages.map(_.sourcePath) shouldBe Vector("a.png", "b.png")
     }
 
     "read META-INF blog metadata and validate relative image paths from a file tree" in {
@@ -140,7 +140,7 @@ final class BlogFileTreeImportSupportSpec extends AnyWordSpec with Matchers with
       draft.content should include ("""src="/web/blob/content/images-inline.png"""")
       draft.content should not include ("""src="images/inline.png"""")
       draft.entityImages.map(_.role) shouldBe Vector("thumbnail")
-      draft.inlineImages.map(_.sourcePath) shouldBe Vector("images/inline.png")
+      draft.contentImages.map(_.sourcePath) shouldBe Vector("images/inline.png")
     }
 
     "extract a ZIP article tree and preserve HTML-relative image resolution" in {
@@ -171,7 +171,7 @@ final class BlogFileTreeImportSupportSpec extends AnyWordSpec with Matchers with
       draft.slug shouldBe Some("zipped-post")
       draft.title shouldBe "ZIP title"
       draft.content should include ("""src="/web/blob/content/posts-images-inline.png"""")
-      draft.inlineImages.map(_.treePath) shouldBe Vector(Some("posts/images/inline.png"))
+      draft.contentImages.map(_.treePath) shouldBe Vector(Some("posts/images/inline.png"))
       draft.entityImages.map(_.path) shouldBe Vector("assets/hero.jpg")
     }
 

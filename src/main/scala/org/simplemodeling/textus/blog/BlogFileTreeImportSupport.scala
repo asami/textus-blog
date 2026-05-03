@@ -11,7 +11,7 @@ import org.yaml.snakeyaml.Yaml
 
 /*
  * @since   Apr. 29, 2026
- * @version Apr. 29, 2026
+ * @version May.  3, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class BlogTreeMetadata(
@@ -30,7 +30,7 @@ final case class BlogTreeEntityImage(
   caption: Option[String] = None
 )
 
-final case class BlogInlineImageDraft(
+final case class BlogContentImageDraft(
   index: Int,
   sourcePath: String,
   altText: Option[String],
@@ -45,7 +45,7 @@ final case class BlogRegistrationDraft(
   description: Option[String],
   canonicalPath: Option[String],
   entityImages: Vector[BlogTreeEntityImage],
-  inlineImages: Vector[BlogInlineImageDraft]
+  contentImages: Vector[BlogContentImageDraft]
 )
 
 object BlogFileTreeImportSupport {
@@ -54,7 +54,7 @@ object BlogFileTreeImportSupport {
 
   def normalizeTreeWithInlineImageUrls(
     root: Path
-  )(resolve: BlogInlineImageDraft => Option[String]): Consequence[BlogRegistrationDraft] =
+  )(resolve: BlogContentImageDraft => Option[String]): Consequence[BlogRegistrationDraft] =
     for {
       metadata <- loadMetadata(root)
       entry <- _entry_html(root, metadata)
@@ -150,7 +150,7 @@ object BlogFileTreeImportSupport {
         val title = metadata.title.orElse(document.title).map(_.trim).filter(_.nonEmpty)
         title
           .map { resolvedTitle =>
-            val inlineImages = _inline_images(fragment)
+            val contentImages = _inline_images(fragment)
             Consequence.success(
               BlogRegistrationDraft(
                 slug = metadata.slug,
@@ -159,7 +159,7 @@ object BlogFileTreeImportSupport {
                 description = metadata.description.orElse(document.description),
                 canonicalPath = metadata.canonicalPath.orElse(document.canonical),
                 entityImages = metadata.entityImages,
-                inlineImages = inlineImages
+                contentImages = contentImages
               )
             )
           }
@@ -170,14 +170,14 @@ object BlogFileTreeImportSupport {
   def normalizeWithInlineImageUrls(
     entryHtml: String,
     metadata: BlogTreeMetadata
-  )(resolve: BlogInlineImageDraft => Option[String]): Consequence[BlogRegistrationDraft] =
+  )(resolve: BlogContentImageDraft => Option[String]): Consequence[BlogRegistrationDraft] =
     HtmlTree.parse(entryHtml).flatMap { document =>
       document.articleFragment.flatMap { fragment =>
         val title = metadata.title.orElse(document.title).map(_.trim).filter(_.nonEmpty)
         title
           .map { resolvedTitle =>
-            val inlineImages = _inline_images(fragment)
-            val byIndex = inlineImages.map(x => x.index -> x).toMap
+            val contentImages = _inline_images(fragment)
+            val byIndex = contentImages.map(x => x.index -> x).toMap
             val rewritten = fragment.rewriteImageSources { img =>
               byIndex.get(img.index).flatMap(resolve)
             }
@@ -189,7 +189,7 @@ object BlogFileTreeImportSupport {
                 description = metadata.description.orElse(document.description),
                 canonicalPath = metadata.canonicalPath.orElse(document.canonical),
                 entityImages = metadata.entityImages,
-                inlineImages = inlineImages
+                contentImages = contentImages
               )
             )
           }
@@ -202,15 +202,15 @@ object BlogFileTreeImportSupport {
     entry: Path,
     entryHtml: String,
     metadata: BlogTreeMetadata
-  )(resolve: BlogInlineImageDraft => Option[String]): Consequence[BlogRegistrationDraft] =
+  )(resolve: BlogContentImageDraft => Option[String]): Consequence[BlogRegistrationDraft] =
     HtmlTree.parse(entryHtml).flatMap { document =>
       document.articleFragment.flatMap { fragment =>
         val title = metadata.title.orElse(document.title).map(_.trim).filter(_.nonEmpty)
         title
           .map { resolvedTitle =>
             for {
-              inlineImages <- _resolve_inline_images(root, entry, _inline_images(fragment))
-              byIndex = inlineImages.map(x => x.index -> x).toMap
+              contentImages <- _resolve_inline_images(root, entry, _inline_images(fragment))
+              byIndex = contentImages.map(x => x.index -> x).toMap
               rewritten = fragment.rewriteImageSources { img =>
                 byIndex.get(img.index).flatMap(resolve)
               }
@@ -221,7 +221,7 @@ object BlogFileTreeImportSupport {
               description = metadata.description.orElse(document.description),
               canonicalPath = metadata.canonicalPath.orElse(document.canonical),
               entityImages = metadata.entityImages,
-              inlineImages = inlineImages
+              contentImages = contentImages
             )
           }
           .getOrElse(Consequence.operationInvalid("Blog file tree metadata does not define a title and HTML head title is missing"))
@@ -236,9 +236,9 @@ object BlogFileTreeImportSupport {
         Consequence.operationInvalid(s"failed to read ${path}: ${e.getMessage}")
     }
 
-  private def _inline_images(fragment: org.goldenport.cncf.html.HtmlFragment): Vector[BlogInlineImageDraft] =
+  private def _inline_images(fragment: org.goldenport.cncf.html.HtmlFragment): Vector[BlogContentImageDraft] =
     fragment.images.map { img =>
-      BlogInlineImageDraft(img.index, img.src, img.alt, img.title)
+      BlogContentImageDraft(img.index, img.src, img.alt, img.title)
     }
 
   private def _entry_html(root: Path, metadata: BlogTreeMetadata): Consequence[Path] =
@@ -283,7 +283,7 @@ object BlogFileTreeImportSupport {
   private def _validate_inline_images(
     root: Path,
     entry: Path,
-    images: Vector[BlogInlineImageDraft]
+    images: Vector[BlogContentImageDraft]
   ): Consequence[Unit] = {
     val base = entry.getParent
     images
@@ -292,23 +292,23 @@ object BlogFileTreeImportSupport {
         val resolved = _resolve_tree_path(base, x.sourcePath)
         !_within(root, resolved) || !Files.isRegularFile(resolved)
       }
-      .map(x => Consequence.operationInvalid(s"Blog inline image is missing: ${x.sourcePath}"))
+      .map(x => Consequence.operationInvalid(s"Blog content image is missing: ${x.sourcePath}"))
       .getOrElse(Consequence.success(()))
   }
 
   private def _resolve_inline_images(
     root: Path,
     entry: Path,
-    images: Vector[BlogInlineImageDraft]
-  ): Consequence[Vector[BlogInlineImageDraft]] = {
+    images: Vector[BlogContentImageDraft]
+  ): Consequence[Vector[BlogContentImageDraft]] = {
     val base = Option(entry.getParent).getOrElse(root)
-    images.foldLeft(Consequence.success(Vector.empty[BlogInlineImageDraft])) {
+    images.foldLeft(Consequence.success(Vector.empty[BlogContentImageDraft])) {
       case (z, image) =>
         z.flatMap { xs =>
           if (_is_local_relative_src(image.sourcePath)) {
             val resolved = _resolve_tree_path(base, image.sourcePath)
             if (!_within(root, resolved) || !Files.isRegularFile(resolved))
-              Consequence.operationInvalid(s"Blog inline image is missing: ${image.sourcePath}")
+              Consequence.operationInvalid(s"Blog content image is missing: ${image.sourcePath}")
             else
               Consequence.success(xs :+ image.copy(treePath = Some(_tree_relative_path(root, resolved))))
           } else {

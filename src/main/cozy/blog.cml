@@ -22,7 +22,7 @@ This model keeps the image binding pattern explicit:
   `contentAttributes.content` as the canonical HTML article fragment.
 - `ImportPostTree` accepts a local-previewable HTML file tree archive and uses
   CNCF standard HTML tree values to extract article content.
-- `BlogInlineImage` tracks images discovered from `img` tags in article content.
+- `contentAttributes.references` tracks links and images discovered in article content.
 
 # SERVICE
 
@@ -319,54 +319,6 @@ DeactivateBlogPost
 
 DeactivateBlogPostResult
 
-#### syncInlineImages
-
-##### TYPE
-
-COMMAND
-
-##### ENTITY
-
-BlogInlineImage
-
-##### INPUT
-
-###### TYPE
-
-SyncInlineImages
-
-##### OUTPUT
-
-###### TYPE
-
-SyncInlineImagesResult
-
-#### searchInlineImages
-
-##### TYPE
-
-QUERY
-
-##### IMPLEMENTATION
-
-entity-search
-
-##### ENTITY
-
-BlogInlineImage
-
-##### INPUT
-
-###### TYPE
-
-SearchBlogInlineImages
-
-##### OUTPUT
-
-###### TYPE
-
-SearchBlogInlineImagesResult
-
 # ENTITY
 
 ## BlogPost
@@ -383,7 +335,7 @@ attributes. `name` stores the URL/SEO slug, and
 extracted from full HTML input or accepted directly by `registerPost`. Images
 are represented by CNCF BlobAttachment Association rows whose role identifies
 primary, cover, thumbnail, gallery, or inline use. Inline `img` tag occurrences
-are tracked by `BlogInlineImage`.
+are tracked by `contentAttributes.references`.
 
 Public read/search should expose only posts whose SimpleEntity lifecycle is
 `postStatus = published` and `aliveness = alive`. Draft and inactive posts
@@ -398,34 +350,6 @@ attributes.
 | name     | type   | multiplicity | label  | derived |
 |----------+--------+--------------+--------+---------|
 | authorId | string | ?            | Author | ownerId |
-
-## BlogInlineImage
-
-### FEATURES
-
-extends = ["SimpleEntity"]
-
-### DESCRIPTION
-
-Image occurrence extracted from an `img` tag in a blog article content
-fragment.
-
-This entity records source markup details separately from the generic
-BlobAttachment Association link. A synchronized inline image should have a
-corresponding Association row with `role = inline`.
-
-### ATTRIBUTE
-
-| name         | type     | multiplicity | web-label     | web-placeholder |
-|--------------+----------+--------------+---------------+-----------------|
-| id           | entityid | 1            | ID            |                 |
-| blogPostId   | entityid | 1            | Blog post     |                 |
-| blobId       | entityid | ?            | Managed Blob  |                 |
-| sourceUrl    | string   | 1            | Source URL    | /blob/content/1 |
-| altText      | string   | ?            | Alt text      | Screenshot      |
-| titleText    | string   | ?            | Title text    |                 |
-| sortOrder    | int      | 1            | Sort order    | 10              |
-| synchronized | boolean  | 1            | Synchronized  | true            |
 
 # RELATIONSHIP
 
@@ -463,40 +387,6 @@ one-to-many
 
 independent
 
-## BlogPost.inlineImages
-
-### KIND
-
-composition
-
-### SOURCE
-
-BlogPost
-
-### TARGET
-
-BlogInlineImage
-
-### STORAGE
-
-child-parent-id-field
-
-### PARENT ID FIELD
-
-blogPostId
-
-### SORT ORDER FIELD
-
-sortOrder
-
-### MULTIPLICITY
-
-one-to-many
-
-### LIFECYCLE
-
-dependent
-
 # COMMAND
 
 ## ImportPostTree
@@ -529,8 +419,9 @@ image paths, and calls `RegisterBlogPost`.
 ### DESCRIPTION
 
 Lower-level bulk registration command. `content` is a normalized HTML fragment.
-`entityImages` represents thumbnail/cover/gallery style Entity images.
-`inlineImages` represents images embedded in the HTML content.
+`entityImages` represents thumbnail/cover/gallery style Entity images. Images
+embedded in the HTML content are extracted into `contentAttributes.references`
+and linked as inline BlobAttachment associations.
 
 ### ATTRIBUTE
 
@@ -543,7 +434,6 @@ Lower-level bulk registration command. `content` is a normalized HTML fragment.
 | description     | string              | ?            |
 | canonicalPath   | string              | ?            |
 | entityImages    | BlogEntityImageSpec | *            |
-| inlineImages    | BlogInlineImageSpec | *            |
 
 ## SaveEditorBlogPost
 
@@ -590,20 +480,6 @@ client-supplied author account ids are ignored.
 | id                | entityid | 1            |
 | operatorAccountId | entityid | 1            |
 | reason            | string   | ?            |
-
-## SyncInlineImages
-
-### DESCRIPTION
-
-Command payload for scanning article content `img` tags and synchronizing their
-managed image bindings.
-
-### ATTRIBUTE
-
-| name           | type     | multiplicity |
-|----------------+----------+--------------|
-| blogPostId     | entityid | 1            |
-| actorAccountId | entityid | 1            |
 
 # QUERY
 
@@ -663,16 +539,6 @@ managed image bindings.
 | offset | int    | ?            |
 | limit  | int    | ?            |
 
-## SearchBlogInlineImages
-
-### ATTRIBUTE
-
-| name       | type     | multiplicity |
-|------------+----------+--------------|
-| blogPostId | entityid | 1            |
-| offset     | int      | ?            |
-| limit      | int      | ?            |
-
 # VALUE
 
 ## BlogEntityImageSpec
@@ -692,27 +558,6 @@ primary, cover, and gallery.
 | sortOrder       | int      | ?            |
 | caption         | string   | ?            |
 | contentType     | string   | ?            |
-| checksum        | string   | ?            |
-
-## BlogInlineImageSpec
-
-### DESCRIPTION
-
-Image specification for an image embedded in Blog HTML content. File-tree import
-uses `path` resolved relative to the entry HTML. Direct bulk registration may
-use `clientId` for `cid:` references.
-
-### ATTRIBUTE
-
-| name            | type     | multiplicity |
-|-----------------+----------+--------------|
-| clientId        | string   | ?            |
-| path            | string   | ?            |
-| existingBlobId  | entityid | ?            |
-| contentType     | string   | ?            |
-| altText         | string   | ?            |
-| titleText       | string   | ?            |
-| sortOrder       | int      | ?            |
 | checksum        | string   | ?            |
 
 ## RegisterBlogPostResult
@@ -764,18 +609,6 @@ OperationResult
 OperationResult
 
 ## DeactivateBlogPostResult
-
-### EXTENDS
-
-OperationResult
-
-## SyncInlineImagesResult
-
-### EXTENDS
-
-OperationResult
-
-## SearchBlogInlineImagesResult
 
 ### EXTENDS
 
