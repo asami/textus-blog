@@ -116,6 +116,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         descriptor.copy(entityRuntimeDescriptors = descriptor.entityRuntimeDescriptors.map {
           case runtime if runtime.entityName == "BlogPost" =>
             runtime.copy(
+              entityKind = org.goldenport.cncf.entity.runtime.EntityKind.Document,
+              entityKindExplicit = true,
               usageKind = org.goldenport.cncf.security.EntityUsageKind.PublicContent,
               applicationDomain = org.goldenport.cncf.security.EntityApplicationDomain.Cms
             )

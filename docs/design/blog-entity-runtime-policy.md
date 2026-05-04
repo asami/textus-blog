@@ -8,15 +8,16 @@ Working Set, and view/cache usage. The general CNCF policy lives in
 
 ## BlogPost Classification
 
-`BlogPost` is a CMS public-content resource.
+`BlogPost` is a CMS public-content document.
 
 Runtime classification:
 
 | Parameter | Value |
 |-----------|-------|
-| `operationKind` | `resource` |
+| `entityKind` | `document` |
 | `applicationDomain` | `cms` |
 | `usageKind` | `public-content` |
+| legacy `operationKind` | `resource` |
 | `workingSetPolicy` | `disabled` |
 
 `BlogPost` is the canonical store-backed Entity for article content. It owns
@@ -35,11 +36,11 @@ Working Set behave as a CMS cache instead of an execution-oriented domain
 runtime.
 
 Draft and edit state do not make `BlogPost` a task. They are lifecycle states
-of a content resource.
+of a document.
 
 If review or publication approval requires explicit process state, model that
-process as a separate task Entity, for example `BlogPublicationTask`, and keep
-`BlogPost` as the content resource.
+process as a separate workflow Entity, for example `BlogPublicationWorkflow`,
+and keep `BlogPost` as the document.
 
 ## View and Cache Candidates
 
