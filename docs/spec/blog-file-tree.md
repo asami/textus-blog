@@ -1,4 +1,4 @@
-# Blog File Tree Import
+# Blog File Tree Import Spec
 
 BlogComponent accepts a local-previewable article file tree through
 `importPostTree`. The Web/client input is `fileBundle`, a CNCF `filebundle`
