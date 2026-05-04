@@ -16,7 +16,7 @@ import org.goldenport.cncf.component.{Component, ComponentCreate}
 import org.goldenport.cncf.context.{ExecutionContext, SecurityContext}
 import org.goldenport.cncf.directive.{Query, SearchResult}
 import org.goldenport.cncf.entity.{EntityIdentityScope, EntityPersistent, EntityPersistentCreate, EntityQuery, EntitySearchScope, EntityStore, EntityVisibilityScope, SimpleEntityStorageShapePolicy}
-import org.goldenport.cncf.entity.view.{Browser, ContextualBrowserQuery, ViewBuilder, ViewCollection}
+import org.goldenport.cncf.entity.view.{ContextualBrowserQuery, ViewBuilder, ViewCachePolicy, ViewQueryCacheScope}
 import org.goldenport.cncf.feed.{AtomFeedProjection, AtomFeedRenderer}
 import org.goldenport.cncf.id.TextusUrn
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
@@ -1833,19 +1833,22 @@ object BlogComponentRuntimeFactory {
     includeRenderedContent: Boolean
   ): Unit =
     if (component.viewSpace.collectionOption[BlogProjectionRow](name).isEmpty) {
-      val collection = new ViewCollection[BlogProjectionRow](
+      val policy = ViewCachePolicy(
+        queryScope =
+          if (visibilityScope == EntityVisibilityScope.Owner) ViewQueryCacheScope.Principal
+          else ViewQueryCacheScope.Shared,
+        metricsName = name
+      )
+      val builder =
         new ViewBuilder[BlogProjectionRow] {
           def build(id: EntityId): Consequence[BlogProjectionRow] =
             Consequence.operationInvalid(s"$name does not support direct materialization by id")
-        },
-        maxQueries = if (visibilityScope == EntityVisibilityScope.Owner) 0 else 512,
-        metricsName = name
-      )
+        }
       val query = new ContextualBrowserQuery[BlogProjectionRow] {
         def query_with_context(q: Query[_])(using ctx: ExecutionContext): Consequence[Vector[BlogProjectionRow]] =
           _blog_projection_rows(component, visibilityScope, includeRenderedContent, q)
       }
-      component.viewSpace.register(name, collection, Browser.from(collection, query))
+      component.viewSpace.registerReadSideView[BlogProjectionRow](name, policy)(builder, query)
     }
 
   private def _blog_projection_rows(
