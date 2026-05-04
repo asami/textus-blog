@@ -13,8 +13,10 @@ import org.goldenport.cncf.action.ActionCall
 import org.goldenport.cncf.association.{AssociationCreate, AssociationDomain, AssociationFilter, AssociationRepository, AssociationStoragePolicy}
 import org.goldenport.cncf.blob.*
 import org.goldenport.cncf.component.{Component, ComponentCreate}
+import org.goldenport.cncf.context.{ExecutionContext, SecurityContext}
 import org.goldenport.cncf.directive.{Query, SearchResult}
 import org.goldenport.cncf.entity.{EntityIdentityScope, EntityPersistent, EntityPersistentCreate, EntityQuery, EntitySearchScope, EntityStore, EntityVisibilityScope, SimpleEntityStorageShapePolicy}
+import org.goldenport.cncf.entity.view.{Browser, ContextualBrowserQuery, ViewBuilder, ViewCollection}
 import org.goldenport.cncf.feed.{AtomFeedProjection, AtomFeedRenderer}
 import org.goldenport.cncf.id.TextusUrn
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
@@ -38,6 +40,53 @@ import org.simplemodeling.textus.blog.value.BlogEntityImageSpec
 import org.goldenport.cncf.association.AssociationRepository.given
 import org.goldenport.cncf.blob.BlobRepository.given
 
+private[blog] final case class BlogProjectionRow(
+  entityId: EntityId,
+  slug: String,
+  shortid: String,
+  title: String,
+  summary: Option[String],
+  authorId: String,
+  postStatus: String,
+  aliveness: String,
+  createdAt: java.time.Instant,
+  updatedAt: java.time.Instant,
+  representativeBlobId: Option[EntityId],
+  representativeBlobUrl: Option[String],
+  imageRoles: Vector[Record],
+  searchText: String,
+  renderedContent: Option[String]
+) {
+  def matches(value: String): Boolean =
+    entityId.value == value || entityId.print == value || slug == value || shortid == value
+
+  def toListRecord: Record =
+    _base_record
+
+  def toFeedRecord: Record =
+    _base_record ++ renderedContent.map("content" -> _).map(Record.dataAuto(_)).getOrElse(Record.empty)
+
+  private def _base_record: Record =
+    Record.dataAuto(
+      "id" -> entityId,
+      "entity_id" -> entityId.value,
+      "shortid" -> shortid,
+      "slug" -> slug,
+      "name" -> slug,
+      "title" -> title,
+      "summary" -> summary,
+      "authorId" -> authorId,
+      "post_status" -> postStatus,
+      "postStatus" -> postStatus,
+      "aliveness" -> aliveness,
+      "createdAt" -> createdAt,
+      "updatedAt" -> updatedAt,
+      "representativeBlobId" -> representativeBlobId,
+      "representativeBlobUrl" -> representativeBlobUrl,
+      "imageRoles" -> imageRoles
+    )
+}
+
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
@@ -60,6 +109,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     BlogServiceFactoryImpl()
 
   private final class BlogRuntimeComponent extends BlogComponentComponent {
+    BlogComponentRuntimeFactory.installBlogViews(this)
+
     override def componentDescriptors: Vector[org.goldenport.cncf.component.ComponentDescriptor] =
       super.componentDescriptors.map { descriptor =>
         descriptor.copy(entityRuntimeDescriptors = descriptor.entityRuntimeDescriptors.map {
@@ -245,10 +296,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val storeQuery = Query.plan(Record.empty)
       val responseQuery = Query.plan(action.record, limit = _int(action.record, "limit"), offset = _int(action.record, "offset"))
       for {
-        result <- _search_blog_posts(storeQuery)
-        visible = _filter_search_text(result.data, action.record)
+        rows <- _published_blog_view_rows(storeQuery)
+        visible = _filter_projection_search_text(rows, action.record)
         page = _page(visible, action.record)
-        records <- exec_from(_sequence(page.map(_public_post_record)))
+        records = page.map(_.toListRecord)
       } yield OperationResponse(
         SearchResult(
           query = responseQuery,
@@ -270,10 +321,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val storeQuery = Query.plan(Record.empty)
       val responseQuery = Query.plan(action.record, limit = _int(action.record, "limit"), offset = _int(action.record, "offset"))
       for {
-        result <- _search_my_blog_posts(storeQuery)
-        visible = _filter_search_text(_sort_feed_posts(result.data), action.record)
+        rows <- _author_blog_view_rows(storeQuery)
+        visible = _filter_projection_search_text(_sort_projection_rows(rows), action.record)
         page = _page(visible, action.record)
-        records <- exec_from(_sequence(page.map(_public_post_record)))
+        records = page.map(_.toListRecord)
       } yield OperationResponse(
         SearchResult(
           query = responseQuery,
@@ -294,10 +345,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     protected def build_Program: ExecUowM[OperationResponse] = {
       val storeQuery = Query.plan(Record.empty)
       for {
-        result <- _search_blog_posts(storeQuery)
-        visible = _filter_search_text(result.data, action.record)
-        page = _page_with_default(_sort_feed_posts(visible), action.record, 20)
-        records <- exec_from(_sequence(page.map(_public_post_record)))
+        rows <- _blog_feed_view_rows(storeQuery)
+        visible = _filter_projection_search_text(rows, action.record)
+        page = _page_with_default(_sort_projection_rows(visible), action.record, 20)
+        records = page.map(_.toFeedRecord)
         baseUrl <- exec_from(AtomFeedProjection.resolveSiteBaseUrl(request, executionContext.runtime.resolvedParameters))
         feed <- exec_from(AtomFeedProjection.project(
           AtomFeedProjection.Config(
@@ -338,6 +389,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         post <- _load_blog_post(action.record, "id")
         updated <- exec_from(_with_blog_visibility(post, publish = true, active = true))
         _ <- entity_save(updated)
+        _ <- exec_from(_invalidate_blog_views())
       } yield OperationResponse(updated.toRecord())
   }
 
@@ -350,6 +402,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         post <- _load_blog_post(action.record, "id")
         updated <- exec_from(_with_blog_visibility(post, post.lifecycleAttributes.postStatus, Aliveness.Dead))
         _ <- entity_save(updated)
+        _ <- exec_from(_invalidate_blog_views())
       } yield OperationResponse(updated.toRecord())
   }
 
@@ -466,6 +519,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             }
           } yield (created.id, created.record.getOrElse(post.toRecord()), inlineCount)
       }
+      _ <- exec_from(_invalidate_blog_views())
     } yield OperationResponse(
       _post_response_record(saved._2, saved._1) ++ Record.dataAuto(
         "inlineImageCount" -> saved._3
@@ -598,6 +652,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           entityImages <- _create_entity_images(postId, entityImageSpecs, treeRoot)
         } yield (entityImages, inline)
       }
+      _ <- exec_from(_invalidate_blog_views())
     } yield {
       OperationResponse(
         _post_response_record(created.toRecord, created.id) ++ Record.dataAuto(
@@ -1095,6 +1150,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       case None => Consequence.serviceUnavailable("BlogComponent is not attached to a subsystem component")
     }
 
+  private def _invalidate_blog_views(): Consequence[Unit] =
+    _component.map { component =>
+      BlogComponentRuntimeFactory.invalidateBlogViews(component)
+    }
+
   private def _entity_id(record: Record, names: String*): Consequence[EntityId] =
     _optional_entity_id(record, names*) match {
       case Some(id) => Consequence.success(id)
@@ -1323,6 +1383,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   }
 
   private trait BlogReadActionSupport { self: ActionCall =>
+    private def _component: Consequence[Component] =
+      component match {
+        case Some(value) => Consequence.success(value)
+        case None => Consequence.serviceUnavailable("BlogComponent is not attached to a subsystem component")
+      }
+
     protected final def _current_owner_id(): Consequence[String] = {
       val subject = SecuritySubject.current(using executionContext)
       if (!subject.isAuthenticated) {
@@ -1387,16 +1453,22 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       _with_collection(id, _runtime_collection_id(BlogPost.collectionId))
 
     private def _resolve_public_blog_post(value: Any): ExecUowM[Option[BlogPost]] =
-      _resolve_blog_post_id(value).flatMap {
-        case Some(id) =>
-          entity_load_option[BlogPost](id).map(_.map(_normalize_blog_post))
-        case None =>
-          exec_pure(None)
+      _resolve_public_blog_post_id(value).flatMap {
+        case Some(id) => _load_public_blog_post_from_store(id)
+        case None => exec_pure(None)
+      }
+
+    private def _load_public_blog_post_from_store(id: EntityId): ExecUowM[Option[BlogPost]] =
+      exec_from {
+        given ExecutionContext = executionContext
+        EntityStore.standard().load[BlogPost](_blog_post_id(id)).map {
+          _.map(_normalize_blog_post).filter(BlogComponentRuntimeFactory.isPublicPost)
+        }
       }
 
     private def _resolve_my_blog_post(value: Any): ExecUowM[Option[BlogPost]] =
       for {
-        id <- _resolve_blog_post_id(value)
+        id <- _resolve_author_blog_post_id(value)
         post <- id match {
           case Some(entityId) =>
             entity_load_option[BlogPost](entityId).map(_.map(_normalize_blog_post))
@@ -1404,6 +1476,68 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             exec_pure(None)
         }
       } yield post
+
+    private def _resolve_public_blog_post_id(value: Any): ExecUowM[Option[EntityId]] = {
+      val text = _record_value_text(value)
+      if (text.isEmpty)
+        exec_pure(None)
+      else {
+        val entityId = value match {
+          case id: EntityId => Some(id)
+          case _ => EntityId.parse(text).toOption
+        }
+        entityId match {
+          case Some(id) =>
+            _load_public_blog_post_from_store(id).flatMap {
+              case Some(post) => exec_pure(Some(post.id))
+              case None => _resolve_public_blog_post_id_from_projection_or_store(text)
+            }
+          case None =>
+            _resolve_public_blog_post_id_from_projection_or_store(text)
+        }
+      }
+    }
+
+    private def _resolve_public_blog_post_id_from_projection_or_store(text: String): ExecUowM[Option[EntityId]] =
+      _blog_slug_index_rows(Query.plan(Record.empty)).flatMap { rows =>
+        rows.find(_.matches(text)).map(x => exec_pure(Some(x.entityId))).getOrElse {
+          entity_resolve_identity[BlogPost](
+            _runtime_collection_id(BlogPost.collectionId),
+            text,
+            Vector("shortid", "name"),
+            includeEntityIdEntropy = true,
+            EntityIdentityScope.CurrentContext
+          ).flatMap {
+            case Some(id) =>
+              _load_public_blog_post_from_store(id).map {
+                _.map(_.id)
+              }
+            case None =>
+              _search_blog_posts(Query.plan(Record.empty)).map { result =>
+                result.data.find(x => BlogComponentRuntimeFactory.isPublicPost(x) && _matches_blog_reference(x, text)).map(_.id)
+              }
+          }
+        }
+      }
+
+    private def _resolve_author_blog_post_id(value: Any): ExecUowM[Option[EntityId]] = {
+      val text = _record_value_text(value)
+      if (text.isEmpty)
+        exec_pure(None)
+      else {
+        val direct = value match {
+          case id: EntityId => Some(id)
+          case _ => EntityId.parse(text).toOption
+        }
+        if (_is_content_manager)
+          direct.map(id => exec_pure(Some(_blog_post_id(id)))).getOrElse(_resolve_blog_post_id(text))
+        else
+          _author_blog_view_rows(Query.plan(Record.empty)).map(_.find(_.matches(text)).map(_.entityId))
+      }
+    }
+
+    private def _is_content_manager: Boolean =
+      SecuritySubject.current(using executionContext).hasPrivilege(SecurityContext.Privilege.ApplicationContentManager.name)
 
     private def _resolve_blog_post_id(value: Any): ExecUowM[Option[EntityId]] =
       value match {
@@ -1471,6 +1605,35 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         result.copy(data = result.data.map(_normalize_blog_post))
       }
 
+    protected final def _published_blog_view_rows(
+      query: Query[?]
+    ): ExecUowM[Vector[BlogProjectionRow]] =
+      _blog_view_rows(BlogComponentRuntimeFactory.PublishedBlogViewName, query)
+
+    protected final def _blog_slug_index_rows(
+      query: Query[?]
+    ): ExecUowM[Vector[BlogProjectionRow]] =
+      _blog_view_rows(BlogComponentRuntimeFactory.BlogSlugIndexName, query)
+
+    protected final def _blog_feed_view_rows(
+      query: Query[?]
+    ): ExecUowM[Vector[BlogProjectionRow]] =
+      _blog_view_rows(BlogComponentRuntimeFactory.BlogFeedProjectionName, query)
+
+    protected final def _author_blog_view_rows(
+      query: Query[?]
+    ): ExecUowM[Vector[BlogProjectionRow]] =
+      _blog_view_rows(BlogComponentRuntimeFactory.BlogAuthorPostViewName, query)
+
+    private def _blog_view_rows(
+      viewName: String,
+      query: Query[?]
+    ): ExecUowM[Vector[BlogProjectionRow]] =
+      exec_from {
+        given ExecutionContext = executionContext
+        _component.flatMap(_.viewSpace.queryWithContext[BlogProjectionRow](viewName, query))
+      }
+
     private def _normalize_blog_post(post: BlogPost): BlogPost =
       post.copy(id = _blog_post_id(post.id))
 
@@ -1506,6 +1669,17 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     protected final def _sort_feed_posts(posts: Vector[BlogPost]): Vector[BlogPost] =
       posts.sortBy { post =>
         (-post.lifecycleAttributes.updatedAt.toEpochMilli, -post.lifecycleAttributes.createdAt.toEpochMilli, post.id.value)
+      }
+
+    protected final def _sort_projection_rows(rows: Vector[BlogProjectionRow]): Vector[BlogProjectionRow] =
+      rows.sortBy(row => (-row.updatedAt.toEpochMilli, -row.createdAt.toEpochMilli, row.entityId.value))
+
+    protected final def _filter_projection_search_text(
+      rows: Vector[BlogProjectionRow],
+      record: Record
+    ): Vector[BlogProjectionRow] =
+      _string(record, "text").map(_normalize_text).fold(rows) { needle =>
+        rows.filter(_.searchText.contains(needle))
       }
 
     protected final def _public_post_record(post: BlogPost): Consequence[Record] =
@@ -1582,6 +1756,11 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     private def _normalize_text(value: String): String =
       value.toLowerCase(java.util.Locale.ROOT)
 
+    protected final def _invalidate_blog_views(): Consequence[Unit] =
+      _component.map { component =>
+        BlogComponentRuntimeFactory.invalidateBlogViews(component)
+      }
+
     protected final def _string(record: Record, names: String*): Option[String] =
       names.iterator.flatMap(record.getAny).flatMap {
         case value if java.util.Objects.isNull(value) => None
@@ -1608,8 +1787,188 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 }
 
 object BlogComponentRuntimeFactory {
+  val PublishedBlogViewName: String = "PublishedBlogView"
+  val BlogSlugIndexName: String = "BlogSlugIndex"
+  val BlogFeedProjectionName: String = "BlogFeedProjection"
+  val BlogAuthorPostViewName: String = "BlogAuthorPostView"
+
   val ImageRoles: Vector[String] =
     Vector("primary", "cover", "thumbnail", "gallery", "inline")
+
+  def installBlogViews(component: Component): Unit = {
+    _register_blog_view(
+      component,
+      PublishedBlogViewName,
+      EntityVisibilityScope.Public,
+      includeRenderedContent = false
+    )
+    _register_blog_view(
+      component,
+      BlogSlugIndexName,
+      EntityVisibilityScope.Public,
+      includeRenderedContent = false
+    )
+    _register_blog_view(
+      component,
+      BlogFeedProjectionName,
+      EntityVisibilityScope.Public,
+      includeRenderedContent = true
+    )
+    _register_blog_view(
+      component,
+      BlogAuthorPostViewName,
+      EntityVisibilityScope.Owner,
+      includeRenderedContent = false
+    )
+  }
+
+  def invalidateBlogViews(component: Component): Unit =
+    Vector(PublishedBlogViewName, BlogSlugIndexName, BlogFeedProjectionName, BlogAuthorPostViewName)
+      .foreach(component.viewSpace.invalidate)
+
+  private def _register_blog_view(
+    component: Component,
+    name: String,
+    visibilityScope: EntityVisibilityScope,
+    includeRenderedContent: Boolean
+  ): Unit =
+    if (component.viewSpace.collectionOption[BlogProjectionRow](name).isEmpty) {
+      val collection = new ViewCollection[BlogProjectionRow](
+        new ViewBuilder[BlogProjectionRow] {
+          def build(id: EntityId): Consequence[BlogProjectionRow] =
+            Consequence.operationInvalid(s"$name does not support direct materialization by id")
+        },
+        maxQueries = if (visibilityScope == EntityVisibilityScope.Owner) 0 else 512,
+        metricsName = name
+      )
+      val query = new ContextualBrowserQuery[BlogProjectionRow] {
+        def query_with_context(q: Query[_])(using ctx: ExecutionContext): Consequence[Vector[BlogProjectionRow]] =
+          _blog_projection_rows(component, visibilityScope, includeRenderedContent, q)
+      }
+      component.viewSpace.register(name, collection, Browser.from(collection, query))
+    }
+
+  private def _blog_projection_rows(
+    component: Component,
+    visibilityScope: EntityVisibilityScope,
+    includeRenderedContent: Boolean,
+    query: Query[_]
+  )(using ctx: ExecutionContext): Consequence[Vector[BlogProjectionRow]] = {
+    val cid = EntityCollectionId(ctx.major, ctx.minor, BlogPost.collectionId.name)
+    val entityquery = EntityQuery[BlogPost](
+      cid,
+      query,
+      EntitySearchScope.Store,
+      visibilityScope = Some(visibilityScope)
+    )
+    EntityStore.standard().search[BlogPost](entityquery).flatMap { result =>
+      val posts = result.data.map(x => x.copy(id = _blog_post_id(ctx, x.id)))
+      val scoped = visibilityScope match {
+        case EntityVisibilityScope.Public => posts.filter(_is_public_post)
+        case _ => posts
+      }
+      scoped.foldLeft(Consequence.success(Vector.empty[BlogProjectionRow])) { (z, post) =>
+        z.flatMap(rows => _blog_projection_row(component, post, includeRenderedContent).map(rows :+ _))
+      }
+    }
+  }
+
+  private def _blog_projection_row(
+    component: Component,
+    post: BlogPost,
+    includeRenderedContent: Boolean
+  )(using ctx: ExecutionContext): Consequence[BlogProjectionRow] = {
+    val record = post.toRecord()
+    for {
+      projection <- _image_projection(post.id)
+      rendered <- if (includeRenderedContent) _render_public_content(component, post.contentAttributes) else Consequence.success(None)
+    } yield {
+      val representative = projection.representativeImage
+      BlogProjectionRow(
+        entityId = post.id,
+        slug = _record_string(record, "slug", "name").getOrElse(post.id.parts.entropy),
+        shortid = _record_string(record, "shortid").getOrElse(post.id.parts.entropy),
+        title = _record_string(record, "title").getOrElse(""),
+        summary = _record_string(record, "summary"),
+        authorId = post.securityAttributes.ownerId.id.value,
+        postStatus = _record_string(record, "postStatus", "post_status").getOrElse(""),
+        aliveness = _record_string(record, "aliveness").getOrElse(""),
+        createdAt = post.lifecycleAttributes.createdAt,
+        updatedAt = post.lifecycleAttributes.updatedAt,
+        representativeBlobId = representative.map(_.metadata.id),
+        representativeBlobUrl = representative.map(_.metadata.accessUrl.displayUrl),
+        imageRoles = projection.images.map(_image_role_record),
+        searchText = _search_text(record),
+        renderedContent = rendered
+      )
+    }
+  }
+
+  private def _is_public_post(post: BlogPost): Boolean =
+    post.lifecycleAttributes.postStatus == PostStatus.Published &&
+      post.lifecycleAttributes.aliveness == Aliveness.Alive
+
+  def isPublicPost(post: BlogPost): Boolean = _is_public_post(post)
+
+  private def _blog_post_id(ctx: ExecutionContext, id: EntityId): EntityId = {
+    val cid = EntityCollectionId(ctx.major, ctx.minor, BlogPost.collectionId.name)
+    if (id.collection == cid)
+      id
+    else
+      EntityId(id.major, id.minor, cid, id.timestamp, id.entropy)
+  }
+
+  private def _render_public_content(
+    component: Component,
+    content: ContentAttributes
+  )(using ctx: ExecutionContext): Consequence[Option[String]] =
+    content.content match {
+      case Some(_) =>
+        ContentRenderWorkflow(component).renderHtml(content).map(result => Some(result.html))
+      case None =>
+        Consequence.success(None)
+    }
+
+  private def _image_projection(
+    postId: EntityId
+  )(using ctx: ExecutionContext): Consequence[BlobProjectionResult] = {
+    val blobAssociations = AssociationRepository.entityStore(AssociationStoragePolicy.blobAttachmentDefault)
+    val mediaAssociations = AssociationRepository.entityStore(AssociationStoragePolicy.mediaAttachmentDefault)
+    val blobs = BlobRepository.entityStore()
+    val media = MediaRepository.entityStore()
+    BlobProjection.entityImageProjection(postId.value)(
+      BlobProjection.Loaders(
+        listAssociations = filter =>
+          filter.domain match {
+            case AssociationDomain.MediaAttachment => mediaAssociations.list(filter)
+            case _ => blobAssociations.list(filter)
+          },
+        loadBlob = id => blobs.get(id),
+        loadMedia = id => media.get(MediaKind.Image, id)
+      )
+    )
+  }
+
+  private def _image_role_record(row: BlobProjectionRow): Record =
+    Record.dataAuto(
+      "role" -> row.association.role,
+      "blobId" -> row.metadata.id,
+      "url" -> row.metadata.accessUrl.displayUrl,
+      "sortOrder" -> row.association.sortOrder
+    )
+
+  private def _search_text(record: Record): String =
+    Vector("name", "title", "headline", "summary", "description", "content")
+      .flatMap(record.getAny)
+      .flatMap {
+        case value if java.util.Objects.isNull(value) => None
+        case value => Some(value.toString)
+      }
+      .map(_.toLowerCase(java.util.Locale.ROOT))
+      .mkString("\n")
+
+  private def _record_string(record: Record, names: String*): Option[String] =
+    names.iterator.flatMap(record.getString).nextOption()
 
   private val BlobContentImagePattern: Regex =
     """/web/blob/content/([^"'?\s<>#]+)""".r

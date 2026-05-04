@@ -387,6 +387,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       draftStatuses should contain (Some("draft"))
       draftStatuses should contain (Some("published"))
 
+      val otherResult = _record(_success(component.logic.executeAction(search, otherContext)))
+      otherResult.getInt("totalCount") shouldBe Some(1)
+      _records(otherResult, "data").map(_.getString("title").get).toSet shouldBe Set("My Dashboard Needle Other")
+
       val getMine = GetMyBlogPost.unsafeForTest(Request.of("blog", "blog", "getMyPost"), Record.dataAuto(
         "id" -> myDraftRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("my draft id missing"))
       ))
@@ -442,7 +446,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       stored.lifecycleAttributes.postStatus shouldBe PostStatus.Draft
     }
 
-    "validate editor inline Blob refs before saving or deleting old inline bindings" in {
+    "preserve editor content with failed inline image markers without stale inline bindings" in {
       val subsystem = DefaultSubsystemFactory.default(Some("command"))
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
@@ -478,15 +482,15 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         "publish" -> true
       ))
 
-      component.logic.executeAction(update, summon[ExecutionContext]) shouldBe a[Consequence.Failure[_]]
+      val updated = _record(_success(component.logic.executeAction(update, summon[ExecutionContext])))
+      updated.getInt("inlineImageCount") shouldBe Some(0)
 
       val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
-      stored.toRecord().getString("title") shouldBe Some("Editor Invalid Blob")
-      stored.lifecycleAttributes.postStatus shouldBe PostStatus.Draft
-      val validImageId = stored.contentAttributes.references.head.targetEntityId.getOrElse(fail("valid image reference missing"))
-      _associations(postId).map(_.targetEntityId) should contain (validImageId)
-      stored.contentAttributes.references.map(_.targetEntityId).flatten shouldBe Vector(validImageId)
-      stored.contentAttributes.references.map(_.originalRef).flatten shouldBe Vector(s"/web/blob/content/${validBlob.value}")
+      stored.toRecord().getString("title") shouldBe Some("Should Not Save")
+      stored.lifecycleAttributes.postStatus shouldBe PostStatus.Published
+      stored.contentAttributes.content.map(_.value).getOrElse("") should include ("textus:image-normalization-failed")
+      stored.contentAttributes.references shouldBe empty
+      _associations(postId).map(_.targetEntityId) shouldBe empty
     }
 
     "allow the same Blob image to appear in multiple inline occurrences" in {
@@ -741,7 +745,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       _success(EntityStore.standard().load[BlogPost](postId)) shouldBe None
     }
 
-    "reject direct registerPost path-only image specs" in {
+    "preserve direct registerPost path-only image refs as failed inline markers" in {
       val subsystem = DefaultSubsystemFactory.default(Some("command"))
       val component = (new ComponentFactory)
         .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
@@ -757,11 +761,13 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         "content" -> """<article><img src="images/inline.png"></article>"""
       ))
 
-      val result = component.logic.executeAction(action, summon[ExecutionContext])
+      val created = _record(_success(component.logic.executeAction(action, summon[ExecutionContext])))
 
-      result shouldBe a[Consequence.Failure[_]]
-      val postId = EntityId(summon[ExecutionContext].major, summon[ExecutionContext].minor, BlogPost.collectionId, entropy = Some("path_only"))
-      _success(EntityStore.standard().load[BlogPost](postId)) shouldBe None
+      created.getInt("inlineImageCount") shouldBe Some(0)
+      val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("response id missing"))
+      val stored = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("post missing"))
+      stored.contentAttributes.content.map(_.value).getOrElse("") should include ("textus:image-normalization-failed")
+      stored.contentAttributes.references shouldBe empty
     }
 
     "reject supplied contentReferences on registerPost input" in {
@@ -875,7 +881,12 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         "id" -> postId,
         "publisherAccountId" -> "author_lifecycle"
       ))
-      _success(component.logic.executeAction(publish, managerContext))
+      val publishedUpdate = _record(_success(component.logic.executeAction(publish, managerContext)))
+      publishedUpdate.getString("post_status") shouldBe Some("published")
+      val storedPublished = _success(EntityStore.standard().load[BlogPost](postId)).getOrElse(fail("stored post missing"))
+      storedPublished.id.value shouldBe postId.value
+      storedPublished.lifecycleAttributes.postStatus shouldBe PostStatus.Published
+      storedPublished.toRecord().getString("aliveness") shouldBe Some("alive")
 
       val published = _record(_success(component.logic.executeAction(get, summon[ExecutionContext])))
       published.getAsC[EntityId]("representativeBlobId").toOption.flatten shouldBe Some(coverBlobId)
