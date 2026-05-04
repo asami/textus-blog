@@ -13,8 +13,8 @@ def projectVersion(envName: String, fileName: String, fallback: String): String 
     }
     .getOrElse(fallback)
 
-val cncfVersion = projectVersion("CNCF_VERSION", "cncf-version.conf", "0.4.6-SNAPSHOT")
-val simpleModelingModelVersion = projectVersion("SIMPLEMODELING_MODEL_VERSION", "simplemodeling-model-version.conf", "0.1.6-SNAPSHOT")
+val cncfVersion = projectVersion("CNCF_VERSION", "cncf-version.conf", "0.4.6")
+val simpleModelingModelVersion = projectVersion("SIMPLEMODELING_MODEL_VERSION", "simplemodeling-model-version.conf", "0.1.6")
 val cncfCollaboratorApiVersion = "0.1.0"
 
 lazy val root = project
@@ -23,7 +23,7 @@ lazy val root = project
   .settings(
     organization := "org.textus",
     name := "textus-blog",
-    version := "0.0.1-SNAPSHOT",
+    version := "0.0.1",
 
     scalaVersion := scala3Version,
 
