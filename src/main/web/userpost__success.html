@@ -20,7 +20,7 @@
     </header>
     <main class="container py-4">
       <article class="blog-article">
-        <textus:record-card source="result.body" title="title" subtitle="slug" columns="post_status:Status,aliveness:Aliveness,updated_at:Updated"></textus:record-card>
+        <textus:record-card source="result.body" title="title" subtitle="slug" columns="tagPaths:Tags,post_status:Status,aliveness:Aliveness,updated_at:Updated"></textus:record-card>
         <textus:html-field source="result.body" field="content" class="article-body mt-4"></textus:html-field>
       </article>
       <section class="edit-shell mt-5">
@@ -45,6 +45,11 @@
           <label>
             Description
             <input class="form-control" name="description" value="${result.body.description}">
+          </label>
+          <label>
+            Tags
+            <textarea class="form-control tag-input" name="tags" placeholder="scala, scala.cats, release-notes">${result.body.tagPaths}</textarea>
+            <span class="form-text">Comma or newline separated tag paths.</span>
           </label>
           <div class="editor-actions">
             <button class="btn btn-primary" type="submit">Save</button>

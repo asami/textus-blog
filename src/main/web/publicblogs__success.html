@@ -23,13 +23,15 @@
         <input type="hidden" name="textus.form.page" value="publicblogs">
         <input type="hidden" name="limit" value="50">
         <input class="form-control" type="search" name="text" value="${form.text}" placeholder="Search posts" autocomplete="off">
+        <input class="form-control" type="search" name="tag" value="${form.tag}" placeholder="Tag path" autocomplete="off">
+        <input type="hidden" name="includeDescendants" value="true">
         <button class="btn btn-primary" type="submit">Search</button>
       </form>
       <textus:card-list
         source="result.body"
         title="title"
         subtitle="slug"
-        columns="title:Title,slug:Slug,updated_at:Updated"
+        columns="title:Title,slug:Slug,tagPaths:Tags,updated_at:Updated"
         detail-href="/form/blog-component/blog/get-post/result"
         detail-param-id="{shortid}"
         detail-param-textus.form.page="publicpost"

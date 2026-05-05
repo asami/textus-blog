@@ -26,6 +26,7 @@ expose:
   blog-component.blog.deactivate-post: protected
   blog-component.blog.sync-inline-images: protected
   blog-component.blog.search-inline-images: public
+  blog-component.blog.list-tags: public
 
 form:
   blog-component.blog.import-post-tree:
@@ -69,6 +70,8 @@ form:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-inline-image
     stayOnError: true
+  blog-component.blog.list-tags:
+    enabled: true
 
 admin:
   entity.blog-post:

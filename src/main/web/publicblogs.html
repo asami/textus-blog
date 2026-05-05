@@ -30,11 +30,18 @@
           <form class="search-form" action="/form/blog-component/blog/search-posts" method="post" data-search-form>
             <input type="hidden" name="textus.form.page" value="publicblogs">
             <input type="hidden" name="limit" value="50">
+            <input type="hidden" name="tag" data-tag-filter-input>
+            <input type="hidden" name="includeDescendants" value="true">
             <input class="form-control" type="search" name="text" placeholder="Search posts" autocomplete="off">
             <button class="btn btn-primary" type="submit">Search</button>
           </form>
           <a class="feed-link" href="/rest/v1/blog/blog/atomFeed">Atom</a>
         </div>
+        <div class="tag-filter" data-tag-filter hidden>
+          <span></span>
+          <a href="/web/blog/publicblogs" data-tag-clear>Clear</a>
+        </div>
+        <div class="tag-nav" data-tag-nav></div>
         <div class="post-list" data-post-list>
           <noscript>
             <p class="post-row-meta">Use the search form to list public posts.</p>

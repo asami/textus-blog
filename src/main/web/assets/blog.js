@@ -7,13 +7,16 @@ const paths = {
   save: "/form-api/blog-component/blog/save-editor-post",
   importTree: "/form-api/blog-component/blog/import-post-tree",
   images: "/form-api/blog-component/blog/list-image-blobs",
+  tags: "/form-api/blog-component/blog/list-tags",
   jobs: "/rest/v1/job_control/job/await_job_result"
 };
 
 const state = {
   session: null,
   posts: [],
+  tags: [],
   currentPost: null,
+  activeTag: new URLSearchParams(location.search).get("tag") || "",
   page: document.body.dataset.page || "reader"
 };
 
@@ -36,7 +39,12 @@ const els = {
   editorTitle: document.querySelector("[data-editor-title]"),
   editorContent: document.querySelector("[data-editor-content]"),
   editorDescription: document.querySelector("[data-editor-description]"),
+  editorTags: document.querySelector("[data-editor-tags]"),
   editorPublish: document.querySelector("[data-editor-publish]"),
+  tagNav: document.querySelector("[data-tag-nav]"),
+  tagFilter: document.querySelector("[data-tag-filter]"),
+  tagFilterInput: document.querySelector("[data-tag-filter-input]"),
+  tagClear: document.querySelector("[data-tag-clear]"),
   uploadDialog: document.querySelector("[data-upload-dialog]"),
   uploadForm: document.querySelector("[data-upload-form]"),
   imageDialog: document.querySelector("[data-image-dialog]"),
@@ -49,18 +57,21 @@ document.addEventListener("DOMContentLoaded", boot);
 async function boot() {
   bindCommonEvents();
   await loadSession();
+  await loadTags();
   if (state.page === "my") {
     if (!requireAuth()) return;
     bindDashboardEvents();
-    await loadMyPosts(new URLSearchParams(location.search).get("text") || "");
+    const params = new URLSearchParams(location.search);
+    await loadMyPosts(params.get("text") || "", params.get("tag") || "");
   } else if (state.page === "edit") {
     if (!requireAuth()) return;
     bindEditorEvents();
     await loadEditorPost();
   } else if (state.page === "reader") {
     bindReaderEvents();
-    await loadPublicPosts(new URLSearchParams(location.search).get("text") || "");
-    const postId = new URLSearchParams(location.search).get("post") || location.hash.replace(/^#post=/, "");
+    const params = new URLSearchParams(location.search);
+    await loadPublicPosts(params.get("text") || "", state.activeTag);
+    const postId = params.get("post") || location.hash.replace(/^#post=/, "");
     if (postId) {
       await openPublicPost(postId);
     }
@@ -83,14 +94,16 @@ function bindCommonEvents() {
 function bindReaderEvents() {
   els.searchForm?.addEventListener("submit", async event => {
     event.preventDefault();
-    await loadPublicPosts(new FormData(els.searchForm).get("text") || "");
+    const form = new FormData(els.searchForm);
+    await loadPublicPosts(form.get("text") || "", form.get("tag") || state.activeTag);
   });
 }
 
 function bindDashboardEvents() {
   els.searchForm?.addEventListener("submit", async event => {
     event.preventDefault();
-    await loadMyPosts(new FormData(els.searchForm).get("text") || "");
+    const form = new FormData(els.searchForm);
+    await loadMyPosts(form.get("text") || "", form.get("tag") || "");
   });
   document.querySelector("[data-open-upload-dialog]")?.addEventListener("click", () => {
     els.uploadDialog?.showModal();
@@ -117,6 +130,16 @@ async function loadSession() {
   if (els.sessionName) els.sessionName.textContent = authenticated ? displayUser() : "";
 }
 
+async function loadTags() {
+  try {
+    const result = await postForm(paths.tags, new FormData());
+    state.tags = result.data || result.body || [];
+  } catch {
+    state.tags = [];
+  }
+  renderTagNavigation();
+}
+
 function requireAuth() {
   if (state.session?.authenticated) return true;
   const returnTo = encodeURIComponent(`${location.pathname}${location.search}`);
@@ -124,18 +147,28 @@ function requireAuth() {
   return false;
 }
 
-async function loadPublicPosts(text) {
+async function loadPublicPosts(text, tag = "") {
   const form = new FormData();
   if (text) form.append("text", text);
+  if (tag) {
+    form.append("tag", tag);
+    form.append("includeDescendants", "true");
+  }
   form.append("limit", "50");
   const result = await postForm(paths.search, form);
   state.posts = result.data || [];
+  state.activeTag = tag || "";
+  renderActiveTagFilter();
   renderPublicPostList();
 }
 
-async function loadMyPosts(text) {
+async function loadMyPosts(text, tag = "") {
   const form = new FormData();
   if (text) form.append("text", text);
+  if (tag) {
+    form.append("tag", tag);
+    form.append("includeDescendants", "true");
+  }
   form.append("limit", "100");
   const result = await postForm(paths.searchMy, form);
   state.posts = result.data || [];
@@ -151,12 +184,21 @@ function renderPublicPostList() {
   }
   for (const post of state.posts) {
     const ref = publicPostRef(post);
-    const button = document.createElement("button");
-    button.type = "button";
+    const button = document.createElement("div");
     button.className = "post-row";
+    button.role = "button";
+    button.tabIndex = 0;
     if (state.currentPost && publicPostRef(state.currentPost) === ref) button.classList.add("is-active");
     button.addEventListener("click", () => openPublicPost(ref));
-    button.append(postThumb(post), rowText(post.title || post.slug || readId(post), post.slug || ""));
+    button.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openPublicPost(ref);
+      }
+    });
+    const body = rowText(post.title || post.slug || readId(post), post.slug || "");
+    body.append(tagChipList(postTags(post), { interactive: true, compact: true }));
+    button.append(postThumb(post), body);
     els.postList.append(button);
   }
 }
@@ -172,6 +214,7 @@ function renderMyPostList() {
     const row = document.createElement("div");
     row.className = "post-row dashboard-row";
     const body = rowText(post.title || post.slug || readId(post), `${post.slug || ""} ${statusText(post)}`);
+    body.append(tagChipList(postTags(post), { interactive: true, compact: true }));
     const actions = document.createElement("div");
     actions.className = "post-actions";
     actions.append(linkButton("Edit", `/web/blog/update?id=${encodeURIComponent(editPostRef(post))}`));
@@ -193,9 +236,16 @@ async function openPublicPost(id) {
   document.body.classList.add("reader-detail-mode");
   if (els.backToList) els.backToList.hidden = false;
   if (els.articleTitle) els.articleTitle.textContent = post.title || post.slug || "";
-  if (els.articleBody) els.articleBody.innerHTML = post.content || "";
+  if (els.articleBody) {
+    els.articleBody.innerHTML = "";
+    els.articleBody.append(tagChipList(postTags(post), { interactive: true }));
+    const body = document.createElement("div");
+    body.innerHTML = post.content || "";
+    els.articleBody.append(body);
+  }
   renderPublicPostList();
-  history.replaceState(null, "", `/web/blog/publicblogs?post=${encodeURIComponent(publicPostRef(post) || id)}`);
+  const tagPart = state.activeTag ? `&tag=${encodeURIComponent(state.activeTag)}` : "";
+  history.replaceState(null, "", `/web/blog/publicblogs?post=${encodeURIComponent(publicPostRef(post) || id)}${tagPart}`);
 }
 
 async function loadEditorPost() {
@@ -218,6 +268,7 @@ function setEditor(post) {
   if (els.editorTitle) els.editorTitle.value = post?.title || "";
   if (els.editorContent) els.editorContent.value = post?.content || "<article>\n  <p></p>\n</article>";
   if (els.editorDescription) els.editorDescription.value = post?.description || "";
+  if (els.editorTags) els.editorTags.value = post ? postTags(post).map(tagPath).join("\n") : "";
   if (els.editorPublish) els.editorPublish.checked = post?.postStatus === "published" || post?.post_status === "published";
 }
 
@@ -361,6 +412,64 @@ function linkButton(label, href) {
   link.href = href;
   link.textContent = label;
   return link;
+}
+
+function renderTagNavigation() {
+  if (!els.tagNav) return;
+  els.tagNav.innerHTML = "";
+  for (const tag of state.tags.slice(0, 40)) {
+    const path = tagPath(tag);
+    if (!path) continue;
+    els.tagNav.append(tagChip(path, { interactive: true, compact: true }));
+  }
+}
+
+function renderActiveTagFilter() {
+  if (els.tagFilterInput) els.tagFilterInput.value = state.activeTag;
+  if (!els.tagFilter) return;
+  els.tagFilter.hidden = !state.activeTag;
+  const label = els.tagFilter.querySelector("span");
+  if (label) label.textContent = state.activeTag ? `Tag: ${state.activeTag}` : "";
+}
+
+function tagChipList(tags, options = {}) {
+  const wrap = document.createElement("div");
+  wrap.className = "tag-chip-list";
+  if (options.compact) wrap.classList.add("is-compact");
+  for (const tag of tags) {
+    const path = tagPath(tag);
+    if (path) wrap.append(tagChip(path, options));
+  }
+  if (wrap.children.length === 0) wrap.hidden = true;
+  return wrap;
+}
+
+function tagChip(path, options = {}) {
+  const chip = document.createElement(options.interactive ? "button" : "span");
+  chip.className = "tag-chip";
+  if (options.compact) chip.classList.add("is-compact");
+  chip.textContent = path;
+  if (options.interactive) {
+    chip.type = "button";
+    chip.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      location.href = `/web/blog/publicblogs?tag=${encodeURIComponent(path)}`;
+    });
+  }
+  return chip;
+}
+
+function postTags(post) {
+  if (Array.isArray(post?.tags)) return post.tags;
+  const text = post?.tagPaths || post?.tag_paths || "";
+  return String(text).split(",").map(x => x.trim()).filter(Boolean).map(path => ({ path }));
+}
+
+function tagPath(tag) {
+  if (!tag) return "";
+  if (typeof tag === "string") return tag;
+  return String(tag.path || tag.key || tag.name || tag.value || "").trim();
 }
 
 function readId(record) {

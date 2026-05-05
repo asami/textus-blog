@@ -21,7 +21,7 @@ import org.goldenport.cncf.feed.{AtomFeedProjection, AtomFeedRenderer}
 import org.goldenport.cncf.id.TextusUrn
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
 import org.goldenport.cncf.security.SecuritySubject
-import org.goldenport.cncf.tag.{TagAttachmentSummary, TagSpace, TaggingWorkflow}
+import org.goldenport.cncf.tag.{TagAttachmentSummary, TagCreate, TagRepository, TagSpace, TaggingWorkflow, TagUsageKind}
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
 import org.goldenport.datatype.{ContentType, FileBundle, MimeType}
 import org.goldenport.datatype.ObjectId
@@ -59,6 +59,9 @@ private[blog] final case class BlogProjectionRow(
   searchText: String,
   renderedContent: Option[String]
 ) {
+  private def _tag_paths: String =
+    tags.flatMap(_.getString("path")).mkString(", ")
+
   def matches(value: String): Boolean =
     entityId.value == value || entityId.print == value || slug == value || shortid == value
 
@@ -86,7 +89,9 @@ private[blog] final case class BlogProjectionRow(
       "representativeBlobId" -> representativeBlobId,
       "representativeBlobUrl" -> representativeBlobUrl,
       "imageRoles" -> imageRoles,
-      "tags" -> tags
+      "tags" -> tags,
+      "tagPaths" -> _tag_paths,
+      "tag_paths" -> _tag_paths
     )
 }
 
@@ -208,6 +213,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       action: ListBlogImageBlobs
     ): ListImageBlobsActionCall =
       ListImageBlobsActionCallImpl(core, action)
+
+    override def createListTagsActionCall(
+      core: ActionCall.Core,
+      action: ListBlogTags
+    ): ListTagsActionCall =
+      ListTagsActionCallImpl(core, action)
 
     override def createPublishPostActionCall(
       core: ActionCall.Core,
@@ -385,6 +396,16 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       for {
         _ <- exec_from(_require_authenticated())
         response <- exec_from(_list_image_blobs(action.record))
+      } yield OperationResponse(response)
+  }
+
+  private final case class ListTagsActionCallImpl(
+    core: ActionCall.Core,
+    override val action: ListBlogTags
+  ) extends ListTagsActionCall with BlogReadActionSupport {
+    protected def build_Program: ExecUowM[OperationResponse] =
+      for {
+        response <- exec_from(_blog_tag_tree_record(action.record))
       } yield OperationResponse(response)
   }
 
@@ -773,7 +794,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     tagRefs: Vector[String]
   ): ExecUowM[TagAttachmentSummary] = {
     given org.goldenport.cncf.context.ExecutionContext = executionContext
-    exec_from(TaggingWorkflow(tagSpace = TagSpace.Blog).sync(_association_source_id(postId), tagRefs, role = "tag"))
+    for {
+      ensured <- exec_from(_ensure_blog_tags(tagRefs))
+      summary <- exec_from(TaggingWorkflow(tagSpace = TagSpace.Blog).sync(_association_source_id(postId), ensured, role = "tag"))
+    } yield summary
   }
 
   private def _current_blog_tag_refs(
@@ -1098,6 +1122,68 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       case None =>
         Vector.empty
     }
+
+  private def _ensure_blog_tags(tagRefs: Vector[String]): Consequence[Vector[String]] =
+    tagRefs.foldLeft(Consequence.success(Vector.empty[String])) { (z, ref) =>
+      z.flatMap { xs =>
+        _ensure_blog_tag_ref(ref).map(xs :+ _)
+      }
+    }.map(_.distinct)
+
+  private def _ensure_blog_tag_ref(ref: String): Consequence[String] = {
+    val value = Option(ref).map(_.trim).getOrElse("")
+    if (value.isEmpty)
+      Consequence.success(value)
+    else
+      EntityId.parse(value).toOption match {
+        case Some(_) => Consequence.success(value)
+        case None => _ensure_blog_tag_path(value)
+      }
+  }
+
+  private def _ensure_blog_tag_path(path: String): Consequence[String] = {
+    val normalized = Option(path).map(_.trim).getOrElse("")
+    val parts = normalized.split("\\.").toVector.map(_.trim).filter(_.nonEmpty)
+    if (parts.isEmpty)
+      Consequence.argumentInvalid("tag path is empty")
+    else if (parts.mkString(".") != normalized)
+      Consequence.argumentInvalid(s"invalid tag path: $path")
+    else
+      parts.foldLeft(Consequence.success((Option.empty[EntityId], ""))) {
+        case (z, key) =>
+          z.flatMap {
+            case (parentTagId, prefix) =>
+              val currentPath = if (prefix.isEmpty) key else s"$prefix.$key"
+              _ensure_blog_tag_segment(currentPath, key, parentTagId).map { tag =>
+                (Some(tag.id), currentPath)
+              }
+          }
+      }.map(_._2)
+  }
+
+  private def _ensure_blog_tag_segment(
+    path: String,
+    key: String,
+    parentTagId: Option[EntityId]
+  ): Consequence[org.goldenport.cncf.tag.Tag] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    val repository = TagRepository.entityStore()
+    repository.tree(TagSpace.Blog).flatMap(_.resolve(path)).recoverWith { _ =>
+      repository.create(
+        TagCreate(
+          id = None,
+          key = key,
+          parentTagId = parentTagId,
+          tagSpace = TagSpace.Blog,
+          usageKind = TagUsageKind.Cms
+        )
+      ).recoverWith { conclusion =>
+        repository.tree(TagSpace.Blog).flatMap(_.resolve(path)).recoverWith { _ =>
+          Consequence.Failure(conclusion)
+        }
+      }
+    }
+  }
 
   private def _has_any(record: Record, names: String*): Boolean =
     names.exists(record.getAny(_).isDefined)
@@ -1800,6 +1886,25 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       TaggingWorkflow(tagSpace = TagSpace.Blog).tagSummaryRecords(postId.value)
     }
 
+    protected final def _blog_tag_tree_record(record: Record): Consequence[Record] = {
+      given org.goldenport.cncf.context.ExecutionContext = executionContext
+      val text = _string(record, "text").map(_.trim).filter(_.nonEmpty).map(_.toLowerCase(java.util.Locale.ROOT))
+      TagRepository.entityStore().tree(TagSpace.Blog).map { tree =>
+        text match {
+          case Some(q) =>
+            val filtered = tree.tags.filter { tag =>
+              tag.key.toLowerCase(java.util.Locale.ROOT).contains(q) ||
+                tag.path.toLowerCase(java.util.Locale.ROOT).contains(q) ||
+                tag.title.exists(_.toLowerCase(java.util.Locale.ROOT).contains(q)) ||
+                tag.description.exists(_.toLowerCase(java.util.Locale.ROOT).contains(q))
+            }
+            tree.copy(tags = filtered).toRecord ++ Record.dataAuto("tagSpace" -> TagSpace.Blog)
+          case None =>
+            tree.toRecord ++ Record.dataAuto("tagSpace" -> TagSpace.Blog)
+        }
+      }
+    }
+
     protected final def _public_post_record(post: BlogPost): Consequence[Record] =
       for {
         projection <- _image_projection(post.id)
@@ -1816,7 +1921,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           "representativeBlobId" -> representative.map(_.metadata.id),
           "representativeBlobUrl" -> representative.map(_.metadata.accessUrl.displayUrl),
           "imageRoles" -> projection.images.map(_image_role_record),
-          "tags" -> tags
+          "tags" -> tags,
+          "tagPaths" -> tags.flatMap(_.getString("path")).mkString(", "),
+          "tag_paths" -> tags.flatMap(_.getString("path")).mkString(", ")
         )
       }
 

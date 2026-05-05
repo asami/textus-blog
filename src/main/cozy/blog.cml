@@ -275,6 +275,24 @@ ListBlogImageBlobs
 
 ListBlogImageBlobsResult
 
+#### listTags
+
+##### TYPE
+
+QUERY
+
+##### INPUT
+
+###### TYPE
+
+ListBlogTags
+
+##### OUTPUT
+
+###### TYPE
+
+ListBlogTagsResult
+
 #### publishPost
 
 ##### TYPE
@@ -422,6 +440,7 @@ Lower-level bulk registration command. `content` is a normalized HTML fragment.
 `entityImages` represents thumbnail/cover/gallery style Entity images. Images
 embedded in the HTML content are extracted into `contentAttributes.references`
 and linked as inline BlobAttachment associations.
+`tags` accepts shared Blog TagSpace paths. Missing paths are created on save.
 
 ### ATTRIBUTE
 
@@ -434,13 +453,15 @@ and linked as inline BlobAttachment associations.
 | description     | string              | ?            |
 | canonicalPath   | string              | ?            |
 | entityImages    | BlogEntityImageSpec | *            |
+| tags            | string              | *            |
 
 ## SaveEditorBlogPost
 
 ### DESCRIPTION
 
 Editor-facing save command. Author is derived from the authenticated session;
-client-supplied author account ids are ignored.
+client-supplied author account ids are ignored. `tags` accepts comma/newline
+separated shared Blog TagSpace paths.
 
 ### ATTRIBUTE
 
@@ -452,6 +473,7 @@ client-supplied author account ids are ignored.
 | content     | string   | 1            |
 | description | string   | ?            |
 | publish     | boolean  | ?            |
+| tags        | string   | *            |
 
 ## CreateBlogPost
 
@@ -503,31 +525,37 @@ client-supplied author account ids are ignored.
 
 ### ATTRIBUTE
 
-| name   | type   | multiplicity |
-|--------+--------+--------------|
-| text   | string | ?            |
-| offset | int    | ?            |
-| limit  | int    | ?            |
+| name               | type    | multiplicity |
+|--------------------+---------+--------------|
+| text               | string  | ?            |
+| tag                | string  | ?            |
+| includeDescendants | boolean | ?            |
+| offset             | int     | ?            |
+| limit              | int     | ?            |
 
 ## SearchMyBlogPosts
 
 ### ATTRIBUTE
 
-| name   | type   | multiplicity |
-|--------+--------+--------------|
-| text   | string | ?            |
-| offset | int    | ?            |
-| limit  | int    | ?            |
+| name               | type    | multiplicity |
+|--------------------+---------+--------------|
+| text               | string  | ?            |
+| tag                | string  | ?            |
+| includeDescendants | boolean | ?            |
+| offset             | int     | ?            |
+| limit              | int     | ?            |
 
 ## AtomFeedBlogPosts
 
 ### ATTRIBUTE
 
-| name   | type   | multiplicity |
-|--------+--------+--------------|
-| text   | string | ?            |
-| offset | int    | ?            |
-| limit  | int    | ?            |
+| name               | type    | multiplicity |
+|--------------------+---------+--------------|
+| text               | string  | ?            |
+| tag                | string  | ?            |
+| includeDescendants | boolean | ?            |
+| offset             | int     | ?            |
+| limit              | int     | ?            |
 
 ## ListBlogImageBlobs
 
@@ -538,6 +566,14 @@ client-supplied author account ids are ignored.
 | text   | string | ?            |
 | offset | int    | ?            |
 | limit  | int    | ?            |
+
+## ListBlogTags
+
+### ATTRIBUTE
+
+| name | type   | multiplicity |
+|------+--------+--------------|
+| text | string | ?            |
 
 # VALUE
 
@@ -597,6 +633,12 @@ OperationResult
 OperationResult
 
 ## ListBlogImageBlobsResult
+
+### EXTENDS
+
+OperationResult
+
+## ListBlogTagsResult
 
 ### EXTENDS
 

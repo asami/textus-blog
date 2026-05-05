@@ -1100,6 +1100,47 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       _records(directSearch, "data").map(_.getString("slug")) should not contain Some("tagged-scala-post")
     }
 
+    "auto-create Blog tag paths from editor input and list the shared Blog tag tree" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_auto_tags"
+      )
+      val prefix = "phase20auto"
+      val post = RegisterBlogPost.unsafeForTest(
+        Request.of("blog", "blog", "registerPost"),
+        Record.dataAuto(
+          "slug" -> "auto-created-tags-post",
+          "title" -> "Auto Created Tags Post",
+          "content" -> "<article><p>Tagged</p></article>",
+          "publish" -> true,
+          "tags" -> s"$prefix.scala\n$prefix.cncf"
+        )
+      )
+      val created = _record(_success(component.logic.executeAction(post, summon[ExecutionContext])))
+      val postId = created.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("post id missing"))
+
+      val detail = _record(_success(component.logic.executeAction(
+        GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId)),
+        summon[ExecutionContext]
+      )))
+      val detailPaths = _records(detail, "tags").flatMap(_.getString("path"))
+      detailPaths should contain allOf (s"$prefix.scala", s"$prefix.cncf")
+      detail.getString("tagPaths").getOrElse("") should include (s"$prefix.scala")
+
+      val tree = _record(_success(component.logic.executeAction(
+        ListBlogTags.unsafeForTest(Request.of("blog", "blog", "listTags"), Record.empty),
+        summon[ExecutionContext]
+      )))
+      val treePaths = _records(tree, "data").flatMap(_.getString("path"))
+      treePaths should contain allOf (prefix, s"$prefix.scala", s"$prefix.cncf")
+      val scalaTag = _records(tree, "data").find(_.getString("path").contains(s"$prefix.scala")).getOrElse(fail("scala tag missing"))
+      scalaTag.getString("usageKind").orElse(scalaTag.getString("usage_kind")) shouldBe Some("cms")
+    }
+
     "render Atom feed XML for published active posts" in {
       val subsystem = DefaultSubsystemFactory.default(Some("command"))
       val component = (new ComponentFactory)

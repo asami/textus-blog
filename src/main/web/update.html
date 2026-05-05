@@ -58,6 +58,11 @@
           Description
           <input class="form-control" name="description" data-editor-description>
         </label>
+        <label>
+          Tags
+          <textarea class="form-control tag-input" name="tags" data-editor-tags placeholder="scala, scala.cats, release-notes"></textarea>
+          <span class="form-text">Comma or newline separated tag paths. Missing Blog tags are created when the post is saved.</span>
+        </label>
         <label class="checkbox-line">
           <input type="checkbox" name="publish" data-editor-publish>
           Publish

@@ -37,7 +37,9 @@
       <form class="search-form dashboard-search" action="/form/blog-component/blog/search-my-posts" method="post" data-search-form>
         <input type="hidden" name="textus.form.page" value="userblogs">
         <input type="hidden" name="limit" value="100">
+        <input type="hidden" name="includeDescendants" value="true">
         <input class="form-control" type="search" name="text" placeholder="Search my posts" autocomplete="off">
+        <input class="form-control" type="search" name="tag" placeholder="Tag path" autocomplete="off">
         <button class="btn btn-primary" type="submit">Search</button>
       </form>
 
