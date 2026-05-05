@@ -27,6 +27,8 @@ const els = {
   logout: document.querySelector("[data-logout-form]"),
   sessionName: document.querySelector("[data-session-name]"),
   searchForm: document.querySelector("[data-search-form]"),
+  listSection: document.querySelector("[data-list-section]"),
+  detailSection: document.querySelector("[data-detail-section]"),
   postList: document.querySelector("[data-post-list]"),
   myPostList: document.querySelector("[data-my-post-list]"),
   articleTitle: document.querySelector("[data-article-title]"),
@@ -168,6 +170,8 @@ async function loadPublicPosts(text, tag = "") {
   const result = await postForm(paths.search, form);
   state.posts = result.data || [];
   state.activeTag = tag || "";
+  state.currentPost = null;
+  showPublicList();
   renderActiveTagFilter();
   renderPublicPostList();
 }
@@ -195,9 +199,9 @@ function renderPublicPostList() {
   for (const post of state.posts) {
     const ref = publicPostRef(post);
     const column = document.createElement("div");
-    column.className = "col-12 col-lg-6";
+    column.className = "col-12";
     const button = document.createElement("div");
-    button.className = "post-row card h-100 d-flex flex-row align-items-start gap-3 p-3";
+    button.className = "post-row list-group-item list-group-item-action card h-100 d-flex flex-row align-items-start gap-3 p-3";
     button.role = "button";
     button.tabIndex = 0;
     if (state.currentPost && publicPostRef(state.currentPost) === ref) button.classList.add("is-active");
@@ -249,9 +253,12 @@ async function openPublicPost(id) {
   form.append("id", id);
   const post = await postForm(paths.get, form);
   state.currentPost = post;
-  document.body.classList.add("reader-detail-mode");
+  showPublicDetail();
   window.scrollTo(0, 0);
-  if (els.backToList) els.backToList.hidden = false;
+  if (els.backToList) {
+    els.backToList.href = publicListHref();
+    els.backToList.hidden = false;
+  }
   if (els.articleTitle) els.articleTitle.textContent = post.title || post.slug || "";
   if (els.articleBody) {
     els.articleBody.innerHTML = "";
@@ -263,6 +270,24 @@ async function openPublicPost(id) {
   renderPublicPostList();
   const tagPart = state.activeTag ? `&tag=${encodeURIComponent(state.activeTag)}` : "";
   history.replaceState(null, "", `/web/blog/publicblogs?post=${encodeURIComponent(publicPostRef(post) || id)}${tagPart}`);
+}
+
+function showPublicList() {
+  els.listSection?.classList.remove("d-none");
+  els.detailSection?.classList.add("d-none");
+  if (els.backToList) els.backToList.hidden = true;
+}
+
+function showPublicDetail() {
+  els.listSection?.classList.add("d-none");
+  els.detailSection?.classList.remove("d-none");
+  if (els.backToList) els.backToList.hidden = false;
+}
+
+function publicListHref() {
+  return state.activeTag
+    ? `/web/blog/publicblogs?tag=${encodeURIComponent(state.activeTag)}`
+    : "/web/blog/publicblogs";
 }
 
 async function loadEditorPost() {
@@ -438,7 +463,7 @@ function linkButton(label, href) {
 function renderTagNavigation() {
   if (!els.tagNav) return;
   els.tagNav.innerHTML = "";
-  const panel = els.tagNav.closest(".tag-nav-panel");
+  const panel = els.tagNav.closest("[data-tag-nav-panel]");
   if (panel) panel.hidden = state.tags.length === 0;
   for (const tag of state.tags.slice(0, 40)) {
     const path = tagPath(tag);
@@ -454,7 +479,10 @@ function renderTagNavigation() {
 function renderActiveTagFilter() {
   if (els.tagFilterInput) els.tagFilterInput.value = state.activeTag;
   if (!els.tagFilter) return;
-  els.tagFilter.hidden = !state.activeTag;
+  const active = Boolean(state.activeTag);
+  els.tagFilter.hidden = !active;
+  els.tagFilter.classList.toggle("d-none", !active);
+  els.tagFilter.classList.toggle("d-flex", active);
   const label = els.tagFilter.querySelector("span");
   if (label) label.textContent = state.activeTag ? `Tag: ${state.activeTag}` : "";
   renderTagNavigation();
@@ -530,9 +558,11 @@ function tagChipList(tags, options = {}) {
 
 function tagChip(path, options = {}) {
   const chip = document.createElement(options.interactive ? "button" : "span");
-  chip.className = "tag-chip";
+  chip.className = options.interactive
+    ? "tag-chip btn btn-sm btn-outline-success"
+    : "tag-chip badge rounded-pill text-bg-light border";
   if (options.compact) chip.classList.add("is-compact");
-  if (options.active) chip.classList.add("is-active");
+  if (options.active) chip.classList.add("is-active", "active");
   chip.textContent = path;
   if (options.interactive) {
     chip.type = "button";

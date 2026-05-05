@@ -27,66 +27,14 @@ a {
 }
 
 .editor-actions,
-.list-toolbar,
 .dialog-head {
   display: flex;
   align-items: center;
   gap: 0.75rem;
 }
 
-.reader-pane,
-.article-pane {
-  min-width: 0;
-  background: transparent;
-}
-
-.article-pane {
-  display: none;
-}
-
-.reader-detail-mode .reader-pane {
-  display: none;
-}
-
-.reader-detail-mode .article-pane {
-  display: block;
-}
-
-.back-to-list {
-  display: inline-flex;
-  margin-bottom: 1.25rem;
-  font-weight: 600;
-}
-
-.back-to-list[hidden] {
-  display: none;
-}
-
-.list-toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 1rem;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.85rem;
-  background: var(--panel);
-}
-
 .search-form {
-  flex: 1 1 680px;
-  width: auto;
   margin: 0;
-}
-
-.feed-link {
-  flex: 0 0 auto;
-  align-self: center;
-}
-
-.feed-tools {
-  text-align: right;
 }
 
 .search-form input[type="hidden"] {
@@ -134,12 +82,7 @@ textarea {
 }
 
 .blog-article {
-  max-width: 860px;
-  margin: 0 auto;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: clamp(1.25rem, 3vw, 2.5rem);
-  background: var(--panel);
+  margin: 0;
 }
 
 .blog-article h1 {
@@ -205,19 +148,10 @@ textarea {
   gap: 0.35rem;
 }
 
-.tag-nav-panel {
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0.75rem 0.85rem;
-  background: var(--panel);
-}
-
-.tag-nav-panel[hidden] {
+[data-tag-nav-panel][hidden] {
   display: none;
 }
 
-.tag-nav-title,
 .tag-suggestions-title {
   display: block;
   margin-bottom: 0.35rem;
@@ -232,25 +166,12 @@ textarea {
   margin: 0;
 }
 
-.tag-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: -0.25rem 0 0.75rem;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.25rem 0.65rem;
-  background: var(--accent-weak);
-  color: var(--accent);
-  font-size: 0.86rem;
-}
-
 .tag-filter[hidden] {
-  display: none;
+  display: none !important;
 }
 
 .tag-filter:has(span:empty) {
-  display: none;
+  display: none !important;
 }
 
 .tag-chip-list {
@@ -401,15 +322,4 @@ label > :not(:first-child) {
 
 .toast.is-error {
   background: var(--danger);
-}
-
-@media (max-width: 760px) {
-  .list-toolbar {
-    align-items: stretch;
-  }
-
-  .search-form {
-    flex-basis: 100%;
-  }
-
 }

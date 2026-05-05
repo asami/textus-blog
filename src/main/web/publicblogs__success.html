@@ -14,29 +14,34 @@
         <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
         <nav class="d-flex align-items-center gap-3">
           <a class="nav-link" href="/web/blog/userblogs">My posts</a>
-          <a class="nav-link" href="/rest/v1/blog/blog/atomFeed">Atom</a>
         </nav>
       </div>
     </header>
     <main class="container py-4">
-      <form class="search-form row g-2 align-items-center mb-4" action="/form/blog-component/blog/search-posts" method="post">
-        <input type="hidden" name="textus.form.page" value="publicblogs">
-        <input type="hidden" name="limit" value="50">
-        <div class="col-12 col-md">
-          <input class="form-control" type="search" name="text" value="${form.text}" placeholder="Search posts" autocomplete="off">
+      <div class="card mb-3">
+        <div class="card-body">
+          <form class="search-form row g-2 align-items-end" action="/form/blog-component/blog/search-posts" method="post">
+            <input type="hidden" name="textus.form.page" value="publicblogs">
+            <input type="hidden" name="limit" value="50">
+            <input type="hidden" name="includeDescendants" value="true">
+            <div class="col-12 col-md">
+              <label class="form-label" for="public-blog-result-search-text">Search</label>
+              <input class="form-control" id="public-blog-result-search-text" type="search" name="text" value="${form.text}" placeholder="Search posts" autocomplete="off">
+            </div>
+            <div class="col-12 col-md-4 col-xl-3">
+              <label class="form-label" for="public-blog-result-search-tag">Tag</label>
+              <input class="form-control" id="public-blog-result-search-tag" type="search" name="tag" value="${form.tag}" placeholder="Tag path" autocomplete="off">
+            </div>
+            <div class="col-12 col-md-auto d-grid">
+              <button class="btn btn-primary" type="submit">Search</button>
+            </div>
+          </form>
         </div>
-        <div class="col-12 col-md-4 col-xl-3">
-          <input class="form-control" type="search" name="tag" value="${form.tag}" placeholder="Tag path" autocomplete="off">
-        </div>
-        <input type="hidden" name="includeDescendants" value="true">
-        <div class="col-12 col-md-auto d-grid">
-          <button class="btn btn-primary w-100" type="submit">Search</button>
-        </div>
-      </form>
-      <div class="tag-filter mb-3">
+      </div>
+      <div class="tag-filter alert alert-info py-2 mb-3 d-flex flex-wrap align-items-center gap-2" data-tag-filter>
         <strong>Tag:</strong>
         <span>${form.tag}</span>
-        <a href="/web/blog/publicblogs">Clear</a>
+        <a class="alert-link" href="/web/blog/publicblogs">Clear</a>
       </div>
       <textus:card-list
         source="result.body"
@@ -49,5 +54,9 @@
         detail-label="Read"
         empty="No public posts"></textus:card-list>
     </main>
+    <footer class="container py-3 border-top">
+      <span class="text-secondary small">Feed</span>
+      <a class="link-secondary small ms-2" href="/rest/v1/blog/blog/atomFeed">Atom feed</a>
+    </footer>
   </body>
 </html>
