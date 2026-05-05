@@ -40,6 +40,8 @@ const els = {
   editorContent: document.querySelector("[data-editor-content]"),
   editorDescription: document.querySelector("[data-editor-description]"),
   editorTags: document.querySelector("[data-editor-tags]"),
+  tagInputs: document.querySelectorAll("[data-tag-input]"),
+  tagSuggestions: document.querySelectorAll("[data-tag-suggestions]"),
   editorPublish: document.querySelector("[data-editor-publish]"),
   tagNav: document.querySelector("[data-tag-nav]"),
   tagFilter: document.querySelector("[data-tag-filter]"),
@@ -79,6 +81,11 @@ async function boot() {
 }
 
 function bindCommonEvents() {
+  for (const form of document.querySelectorAll("form")) {
+    if (form.querySelector("[data-tag-input]")) {
+      form.addEventListener("submit", () => normalizeTagInputs(form));
+    }
+  }
   if (els.logout) {
     els.logout.addEventListener("submit", async event => {
       event.preventDefault();
@@ -95,7 +102,7 @@ function bindReaderEvents() {
   els.searchForm?.addEventListener("submit", async event => {
     event.preventDefault();
     const form = new FormData(els.searchForm);
-    await loadPublicPosts(form.get("text") || "", form.get("tag") || state.activeTag);
+    await loadPublicPosts(form.get("text") || "", form.get("tag") || "");
   });
 }
 
@@ -133,11 +140,14 @@ async function loadSession() {
 async function loadTags() {
   try {
     const result = await postForm(paths.tags, new FormData());
-    state.tags = result.data || result.body || [];
+    state.tags = (result.data || result.body || [])
+      .filter(tag => tagPath(tag))
+      .sort((a, b) => tagPath(a).localeCompare(tagPath(b)));
   } catch {
     state.tags = [];
   }
   renderTagNavigation();
+  renderTagSuggestions();
 }
 
 function requireAuth() {
@@ -179,13 +189,15 @@ function renderPublicPostList() {
   if (!els.postList) return;
   els.postList.innerHTML = "";
   if (state.posts.length === 0) {
-    els.postList.innerHTML = `<p class="post-row-meta">No posts.</p>`;
+    els.postList.innerHTML = `<p class="col-12 post-row-meta">No posts.</p>`;
     return;
   }
   for (const post of state.posts) {
     const ref = publicPostRef(post);
+    const column = document.createElement("div");
+    column.className = "col-12 col-lg-6";
     const button = document.createElement("div");
-    button.className = "post-row";
+    button.className = "post-row card h-100 d-flex flex-row align-items-start gap-3 p-3";
     button.role = "button";
     button.tabIndex = 0;
     if (state.currentPost && publicPostRef(state.currentPost) === ref) button.classList.add("is-active");
@@ -199,7 +211,8 @@ function renderPublicPostList() {
     const body = rowText(post.title || post.slug || readId(post), post.slug || "");
     body.append(tagChipList(postTags(post), { interactive: true, compact: true }));
     button.append(postThumb(post), body);
-    els.postList.append(button);
+    column.append(button);
+    els.postList.append(column);
   }
 }
 
@@ -207,12 +220,14 @@ function renderMyPostList() {
   if (!els.myPostList) return;
   els.myPostList.innerHTML = "";
   if (state.posts.length === 0) {
-    els.myPostList.innerHTML = `<p class="post-row-meta">No posts.</p>`;
+    els.myPostList.innerHTML = `<p class="col-12 post-row-meta">No posts.</p>`;
     return;
   }
   for (const post of state.posts) {
+    const column = document.createElement("div");
+    column.className = "col-12";
     const row = document.createElement("div");
-    row.className = "post-row dashboard-row";
+    row.className = "post-row dashboard-row card d-flex flex-row align-items-start gap-3 p-3";
     const body = rowText(post.title || post.slug || readId(post), `${post.slug || ""} ${statusText(post)}`);
     body.append(tagChipList(postTags(post), { interactive: true, compact: true }));
     const actions = document.createElement("div");
@@ -223,7 +238,8 @@ function renderMyPostList() {
     }
     body.append(actions);
     row.append(postThumb(post), body);
-    els.myPostList.append(row);
+    column.append(row);
+    els.myPostList.append(column);
   }
 }
 
@@ -234,6 +250,7 @@ async function openPublicPost(id) {
   const post = await postForm(paths.get, form);
   state.currentPost = post;
   document.body.classList.add("reader-detail-mode");
+  window.scrollTo(0, 0);
   if (els.backToList) els.backToList.hidden = false;
   if (els.articleTitle) els.articleTitle.textContent = post.title || post.slug || "";
   if (els.articleBody) {
@@ -270,6 +287,7 @@ function setEditor(post) {
   if (els.editorDescription) els.editorDescription.value = post?.description || "";
   if (els.editorTags) els.editorTags.value = post ? postTags(post).map(tagPath).join("\n") : "";
   if (els.editorPublish) els.editorPublish.checked = post?.postStatus === "published" || post?.post_status === "published";
+  renderTagSuggestions();
 }
 
 async function importPostTree(event) {
@@ -304,13 +322,15 @@ function renderImages(images) {
   if (!els.imageGrid) return;
   els.imageGrid.innerHTML = "";
   if (images.length === 0) {
-    els.imageGrid.innerHTML = `<p class="post-row-meta">No images.</p>`;
+    els.imageGrid.innerHTML = `<p class="col-12 post-row-meta">No images.</p>`;
     return;
   }
   for (const image of images) {
+    const column = document.createElement("div");
+    column.className = "col-6 col-md-4 col-lg-3";
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "image-card";
+    button.className = "image-card card h-100 p-2 text-start";
     button.innerHTML = `<img alt=""><strong></strong><span class="image-id"></span>`;
     button.querySelector("img").src = image.url;
     button.querySelector("strong").textContent = image.filename || readId(image);
@@ -319,7 +339,8 @@ function renderImages(images) {
       insertAtCursor(els.editorContent, `<img src="/web/blob/content/${readId(image)}" alt="">`);
       els.imageDialog.close();
     });
-    els.imageGrid.append(button);
+    column.append(button);
+    els.imageGrid.append(column);
   }
 }
 
@@ -399,8 +420,8 @@ function postThumb(post) {
 
 function rowText(title, meta) {
   const text = document.createElement("div");
-  text.className = "post-row-body";
-  text.innerHTML = `<div class="post-row-title"></div><div class="post-row-meta"></div>`;
+  text.className = "post-row-body flex-grow-1 min-w-0";
+  text.innerHTML = `<div class="post-row-title card-title mb-1"></div><div class="post-row-meta text-secondary small"></div>`;
   text.querySelector(".post-row-title").textContent = title;
   text.querySelector(".post-row-meta").textContent = meta;
   return text;
@@ -417,10 +438,16 @@ function linkButton(label, href) {
 function renderTagNavigation() {
   if (!els.tagNav) return;
   els.tagNav.innerHTML = "";
+  const panel = els.tagNav.closest(".tag-nav-panel");
+  if (panel) panel.hidden = state.tags.length === 0;
   for (const tag of state.tags.slice(0, 40)) {
     const path = tagPath(tag);
     if (!path) continue;
-    els.tagNav.append(tagChip(path, { interactive: true, compact: true }));
+    els.tagNav.append(tagChip(path, {
+      interactive: true,
+      compact: true,
+      active: path === state.activeTag
+    }));
   }
 }
 
@@ -430,6 +457,63 @@ function renderActiveTagFilter() {
   els.tagFilter.hidden = !state.activeTag;
   const label = els.tagFilter.querySelector("span");
   if (label) label.textContent = state.activeTag ? `Tag: ${state.activeTag}` : "";
+  renderTagNavigation();
+}
+
+function renderTagSuggestions() {
+  for (const target of els.tagSuggestions || []) {
+    target.innerHTML = "";
+    if (state.tags.length === 0) {
+      target.hidden = true;
+      continue;
+    }
+    target.hidden = false;
+    const label = document.createElement("span");
+    label.className = "tag-suggestions-title";
+    label.textContent = "Known tags";
+    target.append(label);
+    const chips = document.createElement("div");
+    chips.className = "tag-chip-list is-compact";
+    for (const tag of state.tags.slice(0, 60)) {
+      const path = tagPath(tag);
+      if (!path) continue;
+      const chip = tagChip(path, {
+        interactive: true,
+        compact: true,
+        onClick: () => appendTagPath(target, path)
+      });
+      chips.append(chip);
+    }
+    target.append(chips);
+  }
+}
+
+function appendTagPath(target, path) {
+  const form = target.closest("form") || document;
+  const input = form.querySelector("[data-tag-input]");
+  if (!input) return;
+  const values = normalizedTagValues(input.value);
+  if (!values.includes(path)) values.push(path);
+  input.value = values.join("\n");
+  input.focus();
+}
+
+function normalizeTagInputs(root = document) {
+  for (const input of root.querySelectorAll("[data-tag-input]")) {
+    input.value = normalizedTagValues(input.value).join("\n");
+  }
+}
+
+function normalizedTagValues(value) {
+  const seen = new Set();
+  const result = [];
+  for (const raw of String(value || "").split(/[,\n]+/)) {
+    const path = raw.trim();
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    result.push(path);
+  }
+  return result;
 }
 
 function tagChipList(tags, options = {}) {
@@ -448,13 +532,18 @@ function tagChip(path, options = {}) {
   const chip = document.createElement(options.interactive ? "button" : "span");
   chip.className = "tag-chip";
   if (options.compact) chip.classList.add("is-compact");
+  if (options.active) chip.classList.add("is-active");
   chip.textContent = path;
   if (options.interactive) {
     chip.type = "button";
     chip.addEventListener("click", event => {
       event.preventDefault();
       event.stopPropagation();
-      location.href = `/web/blog/publicblogs?tag=${encodeURIComponent(path)}`;
+      if (typeof options.onClick === "function") {
+        options.onClick(path);
+      } else {
+        location.href = `/web/blog/publicblogs?tag=${encodeURIComponent(path)}`;
+      }
     });
   }
   return chip;

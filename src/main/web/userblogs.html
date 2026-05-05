@@ -22,8 +22,8 @@
       </div>
     </header>
 
-    <main class="dashboard-shell">
-      <section class="page-head">
+    <main class="dashboard-shell container py-4">
+      <section class="page-head d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
         <div>
           <h1>My posts</h1>
           <p>Drafts, published posts, and inactive posts you authored.</p>
@@ -34,16 +34,22 @@
         </div>
       </section>
 
-      <form class="search-form dashboard-search" action="/form/blog-component/blog/search-my-posts" method="post" data-search-form>
+      <form class="search-form dashboard-search row g-2 align-items-center mb-4" action="/form/blog-component/blog/search-my-posts" method="post" data-search-form>
         <input type="hidden" name="textus.form.page" value="userblogs">
         <input type="hidden" name="limit" value="100">
         <input type="hidden" name="includeDescendants" value="true">
-        <input class="form-control" type="search" name="text" placeholder="Search my posts" autocomplete="off">
-        <input class="form-control" type="search" name="tag" placeholder="Tag path" autocomplete="off">
-        <button class="btn btn-primary" type="submit">Search</button>
+        <div class="col-12 col-md">
+          <input class="form-control" type="search" name="text" placeholder="Search my posts" autocomplete="off">
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+          <input class="form-control" type="search" name="tag" placeholder="Tag path" autocomplete="off">
+        </div>
+        <div class="col-12 col-md-auto d-grid">
+          <button class="btn btn-primary w-100" type="submit">Search</button>
+        </div>
       </form>
 
-      <div class="post-list dashboard-list" data-my-post-list>
+      <div class="post-list dashboard-list row g-3" data-my-post-list>
         <noscript>
           <p class="post-row-meta">Use the search form to list your posts.</p>
         </noscript>
@@ -55,7 +61,7 @@
         <strong>Upload post</strong>
           <button class="btn btn-sm btn-outline-secondary" type="submit">Close</button>
       </form>
-      <form class="upload-form" action="/form/blog-component/blog/import-post-tree" method="post" enctype="multipart/form-data" data-upload-form>
+      <form class="upload-form d-flex flex-column gap-3" action="/form/blog-component/blog/import-post-tree" method="post" enctype="multipart/form-data" data-upload-form>
         <input type="hidden" name="textus.form.page" value="userblogs">
         <label>
           Blog file bundle

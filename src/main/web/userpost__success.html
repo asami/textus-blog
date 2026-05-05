@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="/web/assets/textus-widgets.css">
     <link rel="stylesheet" href="/web/blog/assets/blog.css">
   </head>
-  <body>
+  <body data-page="result-edit">
     <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
       <div class="container-fluid">
         <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
@@ -25,7 +25,7 @@
       </article>
       <section class="edit-shell mt-5">
         <h2 class="h4">Edit this post</h2>
-        <form class="editor-form editor-page-form" action="/form/blog-component/blog/save-editor-post" method="post">
+        <form class="editor-form editor-page-form d-flex flex-column gap-3" action="/form/blog-component/blog/save-editor-post" method="post">
           <input type="hidden" name="textus.form.page" value="update">
           <input type="hidden" name="id" value="${result.body.shortid}">
           <input type="hidden" name="publish" value="${result.body.post_status}">
@@ -48,9 +48,10 @@
           </label>
           <label>
             Tags
-            <textarea class="form-control tag-input" name="tags" placeholder="scala, scala.cats, release-notes">${result.body.tagPaths}</textarea>
+            <textarea class="form-control tag-input" name="tags" data-tag-input placeholder="topic, topic.subtopic">${result.body.tagPaths}</textarea>
             <span class="form-text">Comma or newline separated tag paths.</span>
           </label>
+          <div class="tag-suggestions" data-tag-suggestions aria-live="polite"></div>
           <div class="editor-actions">
             <button class="btn btn-primary" type="submit">Save</button>
             <a class="btn btn-outline-secondary" href="/web/blog/userblogs">Back to my posts</a>
@@ -58,5 +59,9 @@
         </form>
       </section>
     </main>
+    <div class="toast" data-toast hidden></div>
+    <script src="/web/assets/bootstrap.bundle.min.js"></script>
+    <script src="/web/assets/textus-widgets.js"></script>
+    <script src="/web/blog/assets/blog.js"></script>
   </body>
 </html>

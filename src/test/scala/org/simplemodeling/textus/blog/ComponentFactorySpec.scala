@@ -26,7 +26,7 @@ import org.simplemodeling.textus.blog.entity.BlogPost
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  5, 2026
+ * @version May.  6, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactorySpec extends AnyWordSpec with Matchers {
@@ -628,6 +628,11 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       publicHtml should include ("/web/assets/textus-widgets.css")
       publicHtml should include ("/form/blog-component/blog/search-posts")
       publicHtml should include ("data-my-posts-link")
+      publicHtml should include ("data-tag-nav")
+      publicHtml should include ("Browse tags")
+      publicHtml should include ("data-tag-filter-input")
+      publicHtml should include ("placeholder=\"Tag path\"")
+      publicHtml should include ("data-tag-clear")
       publicHtml should not include "textus-list"
       publicHtml should not include "data-editor-form"
       publicHtml should not include "data-upload-form"
@@ -647,19 +652,33 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       newHtml should include ("value=\"new\"")
       newHtml should include ("data-open-image-picker")
       newHtml should include ("data-image-dialog")
+      newHtml should include ("data-tag-input")
+      newHtml should include ("data-tag-suggestions")
+      newHtml should include ("placeholder=\"topic, topic.subtopic\"")
 
       val updateHtml = java.nio.file.Files.readString(root.resolve("src/main/web/update.html"))
       updateHtml should include ("data-editor-form")
       updateHtml should include ("value=\"update\"")
       updateHtml should include ("name=\"id\"")
       updateHtml should include ("Without JavaScript")
+      updateHtml should include ("data-tag-input")
+      updateHtml should include ("data-tag-suggestions")
+      updateHtml should include ("placeholder=\"topic, topic.subtopic\"")
       val blogJs = java.nio.file.Files.readString(root.resolve("src/main/web/assets/blog.js"))
       blogJs should not include ("addEventListener(\"submit\", saveEditorPost)")
       blogJs should not include "paths.save"
+      blogJs should include ("normalizeTagInputs")
+      blogJs should include ("normalizedTagValues")
+      blogJs should include ("renderTagSuggestions")
+      blogJs should include ("appendTagPath")
+      blogJs should include ("is-active")
 
       val publicResultHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicblogs__success.html"))
       publicResultHtml should include ("textus:card-list")
       publicResultHtml should include ("detail-param-textus.form.page=\"publicpost\"")
+      publicResultHtml should include ("Tag:")
+      publicResultHtml should include ("${form.tag}")
+      publicResultHtml should include ("/web/blog/publicblogs")
       val publicPostHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicpost__success.html"))
       publicPostHtml should include ("textus:record-card")
       publicPostHtml should include ("textus:html-field")
@@ -668,10 +687,18 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       userPostHtml should include ("value=\"${result.body.shortid}\"")
       userPostHtml should include ("name=\"publish\" value=\"${result.body.post_status}\"")
       userPostHtml should include ("${result.body.content}</textarea>")
+      userPostHtml should include ("data-tag-input")
+      userPostHtml should include ("data-tag-suggestions")
+      userPostHtml should include ("data-page=\"result-edit\"")
+      userPostHtml should include ("/web/blog/assets/blog.js")
+      userPostHtml should include ("placeholder=\"topic, topic.subtopic\"")
       userPostHtml should not include "update?id=${result.body.entity_id}"
       publicResultHtml should include ("detail-param-id=\"{shortid}\"")
       val userResultHtml = java.nio.file.Files.readString(root.resolve("src/main/web/userblogs__success.html"))
       userResultHtml should include ("detail-param-id=\"{shortid}\"")
+      userResultHtml should include ("Tag:")
+      userResultHtml should include ("${form.tag}")
+      userResultHtml should include ("/web/blog/userblogs")
     }
 
     "register existing Blob images through BlobAttachment Association" in {

@@ -19,14 +19,25 @@
       </div>
     </header>
     <main class="container py-4">
-      <form class="search-form mb-4" action="/form/blog-component/blog/search-posts" method="post">
+      <form class="search-form row g-2 align-items-center mb-4" action="/form/blog-component/blog/search-posts" method="post">
         <input type="hidden" name="textus.form.page" value="publicblogs">
         <input type="hidden" name="limit" value="50">
-        <input class="form-control" type="search" name="text" value="${form.text}" placeholder="Search posts" autocomplete="off">
-        <input class="form-control" type="search" name="tag" value="${form.tag}" placeholder="Tag path" autocomplete="off">
+        <div class="col-12 col-md">
+          <input class="form-control" type="search" name="text" value="${form.text}" placeholder="Search posts" autocomplete="off">
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+          <input class="form-control" type="search" name="tag" value="${form.tag}" placeholder="Tag path" autocomplete="off">
+        </div>
         <input type="hidden" name="includeDescendants" value="true">
-        <button class="btn btn-primary" type="submit">Search</button>
+        <div class="col-12 col-md-auto d-grid">
+          <button class="btn btn-primary w-100" type="submit">Search</button>
+        </div>
       </form>
+      <div class="tag-filter mb-3">
+        <strong>Tag:</strong>
+        <span>${form.tag}</span>
+        <a href="/web/blog/publicblogs">Clear</a>
+      </div>
       <textus:card-list
         source="result.body"
         title="title"

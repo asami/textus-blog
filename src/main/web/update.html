@@ -23,8 +23,8 @@
       </div>
     </header>
 
-    <main class="edit-shell">
-      <section class="page-head">
+    <main class="edit-shell container py-4">
+      <section class="page-head d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
         <div>
           <h1 data-editor-heading>New post</h1>
           <p>Write HTML fragment content for the BlogPost body.</p>
@@ -34,7 +34,7 @@
         </div>
       </section>
 
-      <form class="editor-form editor-page-form" action="/form/blog-component/blog/save-editor-post" method="post" data-editor-form>
+      <form class="editor-form editor-page-form d-flex flex-column gap-3" action="/form/blog-component/blog/save-editor-post" method="post" data-editor-form>
         <input type="hidden" name="textus.form.page" value="update">
         <label>
           Post id
@@ -60,9 +60,10 @@
         </label>
         <label>
           Tags
-          <textarea class="form-control tag-input" name="tags" data-editor-tags placeholder="scala, scala.cats, release-notes"></textarea>
+          <textarea class="form-control tag-input" name="tags" data-editor-tags data-tag-input placeholder="topic, topic.subtopic"></textarea>
           <span class="form-text">Comma or newline separated tag paths. Missing Blog tags are created when the post is saved.</span>
         </label>
+        <div class="tag-suggestions" data-tag-suggestions aria-live="polite"></div>
         <label class="checkbox-line">
           <input type="checkbox" name="publish" data-editor-publish>
           Publish
@@ -79,7 +80,7 @@
         <strong>Images</strong>
         <button class="btn btn-sm btn-outline-secondary" type="submit">Close</button>
       </form>
-      <div class="image-grid" data-image-grid></div>
+      <div class="image-grid row g-3" data-image-grid></div>
     </dialog>
 
     <div class="toast" data-toast hidden></div>

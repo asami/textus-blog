@@ -24,28 +24,39 @@
       </div>
     </header>
 
-    <main class="reader-shell">
-      <section class="reader-pane">
+    <main class="reader-shell container py-4">
+      <section class="reader-pane d-flex flex-column gap-3">
         <div class="list-toolbar">
-          <form class="search-form" action="/form/blog-component/blog/search-posts" method="post" data-search-form>
+          <form class="search-form row g-2 align-items-center" action="/form/blog-component/blog/search-posts" method="post" data-search-form>
             <input type="hidden" name="textus.form.page" value="publicblogs">
             <input type="hidden" name="limit" value="50">
-            <input type="hidden" name="tag" data-tag-filter-input>
             <input type="hidden" name="includeDescendants" value="true">
-            <input class="form-control" type="search" name="text" placeholder="Search posts" autocomplete="off">
-            <button class="btn btn-primary" type="submit">Search</button>
+            <div class="col-12 col-md">
+              <input class="form-control" type="search" name="text" placeholder="Search posts" autocomplete="off">
+            </div>
+            <div class="col-12 col-md-4 col-xl-3">
+              <input class="form-control" type="search" name="tag" data-tag-filter-input placeholder="Tag path" autocomplete="off">
+            </div>
+            <div class="col-12 col-md-auto d-grid">
+              <button class="btn btn-primary w-100" type="submit">Search</button>
+            </div>
           </form>
-          <a class="feed-link" href="/rest/v1/blog/blog/atomFeed">Atom</a>
         </div>
         <div class="tag-filter" data-tag-filter hidden>
           <span></span>
           <a href="/web/blog/publicblogs" data-tag-clear>Clear</a>
         </div>
-        <div class="tag-nav" data-tag-nav></div>
-        <div class="post-list" data-post-list>
+        <section class="tag-nav-panel" aria-label="Browse tags">
+          <div class="tag-nav-title">Browse tags</div>
+          <div class="tag-nav" data-tag-nav></div>
+        </section>
+        <div class="post-list row g-3" data-post-list>
           <noscript>
             <p class="post-row-meta">Use the search form to list public posts.</p>
           </noscript>
+        </div>
+        <div class="feed-tools">
+          <a class="feed-link link-secondary small" href="/rest/v1/blog/blog/atomFeed">Atom feed</a>
         </div>
       </section>
 
