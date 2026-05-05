@@ -39,8 +39,17 @@
             <input class="form-control" name="title" value="${result.body.title}" required>
           </label>
           <label>
+            Content format
+            <input type="hidden" name="contentMarkup" value="${result.body.contentMarkup}" data-editor-markup-value>
+            <select class="form-select" data-editor-markup data-current-content-markup="${result.body.contentMarkup}">
+              <option value="html-fragment">HTML</option>
+              <option value="markdown-gfm">Markdown</option>
+              <option value="smartdox">SmartDox</option>
+            </select>
+          </label>
+          <label>
             Content
-            <textarea class="form-control" name="content" required>${result.body.content}</textarea>
+            <textarea class="form-control" name="content" required>${result.body.contentSource}</textarea>
           </label>
           <label>
             Description

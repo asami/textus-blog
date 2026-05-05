@@ -19,7 +19,7 @@ This model keeps the image binding pattern explicit:
   states.
 - Public blog read/search exposes published active posts.
 - `BlogPost` uses SimpleEntity `name` as its URL/SEO slug and
-  `contentAttributes.content` as the canonical HTML article fragment.
+  `contentAttributes.content` as the canonical article source.
 - `ImportPostTree` accepts a local-previewable HTML file tree archive and uses
   CNCF standard HTML tree values to extract article content.
 - `contentAttributes.references` tracks links and images discovered in article content.
@@ -349,8 +349,8 @@ extends = ["SimpleEntity"]
 
 Blog article entity. Ownership is represented by SimpleEntity security
 attributes. `name` stores the URL/SEO slug, and
-`contentAttributes.content` stores the canonical HTML article fragment
-extracted from full HTML input or accepted directly by `registerPost`. Images
+`contentAttributes.content` stores the canonical HTML/Markdown/SmartDox article
+source extracted from full HTML input or accepted directly by `registerPost`. Images
 are represented by CNCF BlobAttachment Association rows whose role identifies
 primary, cover, thumbnail, gallery, or inline use. Inline `img` tag occurrences
 are tracked by `contentAttributes.references`.
@@ -436,7 +436,9 @@ image paths, and calls `RegisterBlogPost`.
 
 ### DESCRIPTION
 
-Lower-level bulk registration command. `content` is a normalized HTML fragment.
+Lower-level bulk registration command. `content` is normalized article source.
+`contentMarkup` selects `html-fragment`, `markdown-gfm`, or `smartdox`; when
+omitted, `html-fragment` is used.
 `entityImages` represents thumbnail/cover/gallery style Entity images. Images
 embedded in the HTML content are extracted into `contentAttributes.references`
 and linked as inline BlobAttachment associations.
@@ -449,6 +451,7 @@ and linked as inline BlobAttachment associations.
 | slug            | string              | 1            |
 | title           | string              | ?            |
 | content         | string              | 1            |
+| contentMarkup   | string              | ?            |
 | publish         | boolean             | ?            |
 | description     | string              | ?            |
 | canonicalPath   | string              | ?            |
@@ -461,7 +464,8 @@ and linked as inline BlobAttachment associations.
 
 Editor-facing save command. Author is derived from the authenticated session;
 client-supplied author account ids are ignored. `tags` accepts comma/newline
-separated shared Blog TagSpace paths.
+separated shared Blog TagSpace paths. `contentMarkup` selects `html-fragment`,
+`markdown-gfm`, or `smartdox`; when omitted, `html-fragment` is used.
 
 ### ATTRIBUTE
 
@@ -471,6 +475,7 @@ separated shared Blog TagSpace paths.
 | slug        | string   | ?            |
 | title       | string   | 1            |
 | content     | string   | 1            |
+| contentMarkup | string | ?            |
 | description | string   | ?            |
 | publish     | boolean  | ?            |
 | tags        | string   | *            |
@@ -483,6 +488,7 @@ separated shared Blog TagSpace paths.
 |-----------------+----------+--------------|
 | title           | string   | 1            |
 | content         | string   | 1            |
+| contentMarkup   | string   | ?            |
 
 ## PublishBlogPost
 

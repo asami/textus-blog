@@ -39,6 +39,7 @@ const els = {
   editorId: document.querySelector("[data-editor-id]"),
   editorSlug: document.querySelector("[data-editor-slug]"),
   editorTitle: document.querySelector("[data-editor-title]"),
+  editorMarkup: document.querySelector("[data-editor-markup]"),
   editorContent: document.querySelector("[data-editor-content]"),
   editorDescription: document.querySelector("[data-editor-description]"),
   editorTags: document.querySelector("[data-editor-tags]"),
@@ -62,6 +63,7 @@ async function boot() {
   bindCommonEvents();
   await loadSession();
   await loadTags();
+  initializeEditorMarkupControls();
   if (state.page === "my") {
     if (!requireAuth()) return;
     bindDashboardEvents();
@@ -86,6 +88,9 @@ function bindCommonEvents() {
   for (const form of document.querySelectorAll("form")) {
     if (form.querySelector("[data-tag-input]")) {
       form.addEventListener("submit", () => normalizeTagInputs(form));
+    }
+    if (form.querySelector("[data-editor-markup-value]")) {
+      form.addEventListener("submit", () => syncEditorMarkupValue(form));
     }
   }
   if (els.logout) {
@@ -308,7 +313,8 @@ function setEditor(post) {
   if (els.editorId) els.editorId.value = post ? readId(post) : "";
   if (els.editorSlug) els.editorSlug.value = post?.slug || "";
   if (els.editorTitle) els.editorTitle.value = post?.title || "";
-  if (els.editorContent) els.editorContent.value = post?.content || "<article>\n  <p></p>\n</article>";
+  if (els.editorMarkup) els.editorMarkup.value = contentMarkup(post);
+  if (els.editorContent) els.editorContent.value = post ? contentSource(post) : "";
   if (els.editorDescription) els.editorDescription.value = post?.description || "";
   if (els.editorTags) els.editorTags.value = post ? postTags(post).map(tagPath).join("\n") : "";
   if (els.editorPublish) els.editorPublish.checked = post?.postStatus === "published" || post?.post_status === "published";
@@ -361,7 +367,7 @@ function renderImages(images) {
     button.querySelector("strong").textContent = image.filename || readId(image);
     button.querySelector(".image-id").textContent = readId(image);
     button.addEventListener("click", () => {
-      insertAtCursor(els.editorContent, `<img src="/web/blob/content/${readId(image)}" alt="">`);
+      insertAtCursor(els.editorContent, imageReferenceSnippet(readId(image)));
       els.imageDialog.close();
     });
     column.append(button);
@@ -433,6 +439,52 @@ function insertAtCursor(textarea, text) {
   textarea.value = `${textarea.value.slice(0, start)}${text}${textarea.value.slice(end)}`;
   textarea.focus();
   textarea.selectionStart = textarea.selectionEnd = start + text.length;
+}
+
+function initializeEditorMarkupControls() {
+  for (const select of document.querySelectorAll("[data-editor-markup]")) {
+    const current = select.dataset.currentContentMarkup || select.getAttribute("data-current-content-markup");
+    if (current) select.value = normalizeContentMarkup(current);
+    select.addEventListener("change", () => {
+      const form = select.form;
+      if (form) syncEditorMarkupValue(form);
+    });
+    const form = select.form;
+    if (form) syncEditorMarkupValue(form);
+  }
+}
+
+function syncEditorMarkupValue(form) {
+  const select = form.querySelector("[data-editor-markup]");
+  const target = form.querySelector("[data-editor-markup-value]");
+  if (select && target) target.value = normalizeContentMarkup(select.value);
+}
+
+function contentSource(post) {
+  return post?.contentSource || post?.content_source || post?.rawContent || post?.raw_content || post?.content || "";
+}
+
+function contentMarkup(post) {
+  return normalizeContentMarkup(post?.contentMarkup || post?.content_markup || post?.markup || "html-fragment");
+}
+
+function normalizeContentMarkup(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "markdown" || text === "gfm" || text === "markdown-gfm") return "markdown-gfm";
+  if (text === "smart-dox" || text === "smartdox") return "smartdox";
+  return "html-fragment";
+}
+
+function imageReferenceSnippet(id) {
+  const src = `/web/blob/content/${id}`;
+  switch (normalizeContentMarkup(els.editorMarkup?.value)) {
+    case "markdown-gfm":
+      return `![](${src})`;
+    case "smartdox":
+      return `[[${src}]]`;
+    default:
+      return `<img src="${src}" alt="">`;
+  }
 }
 
 function postThumb(post) {

@@ -21,6 +21,7 @@ import org.goldenport.protocol.operation.OperationResponse
 import org.goldenport.record.Record
 import org.simplemodeling.model.datatype.{EntityCollectionId, EntityId}
 import org.simplemodeling.model.statemachine.PostStatus
+import org.simplemodeling.model.value.ContentMarkup
 import org.simplemodeling.textus.blog.entity.BlogPost
 
 /*
@@ -99,6 +100,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       definitions("searchPosts").visibility shouldBe Some("public")
       definitions("getMyPost").visibility shouldBe Some("owner")
       definitions("searchMyPosts").visibility shouldBe Some("owner")
+      definitions("saveEditorPost").parameters.find(_.name == "contentMarkup").map(_.datatype) shouldBe Some("string")
       definitions("importPostTree").parameters.find(_.name == "fileBundle").map(_.datatype) shouldBe Some("filebundle")
     }
 
@@ -288,6 +290,65 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
         summon[ExecutionContext]
       )))
       visible.getString("title") shouldBe Some("Editor Post Updated")
+      visible.getString("content").getOrElse("") should not include ("<article class=\"textus-content\"><article")
+      visible.getString("contentSource").getOrElse("") should include ("urn:textus:image:")
+    }
+
+    "save and register selected content markup and render public HTML" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "markup_author"
+      )
+      val markdown = SaveEditorBlogPost.unsafeForTest(Request.of("blog", "blog", "saveEditorPost"), Record.dataAuto(
+        "slug" -> "markdown-editor-post",
+        "title" -> "Markdown Editor Post",
+        "contentMarkup" -> "markdown-gfm",
+        "content" -> "| A | B |\n|---|---|\n| 1 | 2 |",
+        "publish" -> true
+      ))
+
+      val markdownCreated = _record(_success(component.logic.executeAction(markdown, summon[ExecutionContext])))
+      val markdownId = markdownCreated.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("markdown response id missing"))
+      val markdownStored = _success(EntityStore.standard().load[BlogPost](markdownId)).getOrElse(fail("markdown post missing"))
+      markdownStored.contentAttributes.markup shouldBe Some(ContentMarkup.MarkdownGfm)
+      markdownStored.contentAttributes.contentText shouldBe Some("| A | B |\n|---|---|\n| 1 | 2 |")
+
+      val markdownPublic = _record(_success(component.logic.executeAction(
+        GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> markdownId)),
+        summon[ExecutionContext]
+      )))
+      markdownPublic.getString("contentMarkup") shouldBe Some("markdown-gfm")
+      markdownPublic.getString("contentSource") shouldBe markdownStored.contentAttributes.contentText
+      markdownPublic.fields.count(_.key == "content") shouldBe 1
+      markdownPublic.getString("content").getOrElse("") should include ("""<article class="textus-content">""")
+      markdownPublic.getString("content").getOrElse("") should include ("<table>")
+
+      val smartdox = RegisterBlogPost.unsafeForTest(Request.of("blog", "blog", "registerPost"), Record.dataAuto(
+        "slug" -> "smartdox-register-post",
+        "title" -> "SmartDox Register Post",
+        "contentMarkup" -> "smartdox",
+        "content" -> "# SmartDox Title\n\nSmartDox *bold* text.",
+        "publish" -> true
+      ))
+      val smartdoxCreated = _record(_success(component.logic.executeAction(smartdox, summon[ExecutionContext])))
+      val smartdoxId = smartdoxCreated.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("smartdox response id missing"))
+      val smartdoxStored = _success(EntityStore.standard().load[BlogPost](smartdoxId)).getOrElse(fail("smartdox post missing"))
+      smartdoxStored.contentAttributes.markup shouldBe Some(ContentMarkup.SmartDox)
+
+      val smartdoxPublic = _record(_success(component.logic.executeAction(
+        GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> smartdoxId)),
+        summon[ExecutionContext]
+      )))
+      smartdoxPublic.getString("contentMarkup") shouldBe Some("smartdox")
+      smartdoxPublic.getString("contentSource") shouldBe smartdoxStored.contentAttributes.contentText
+      smartdoxPublic.fields.count(_.key == "content") shouldBe 1
+      smartdoxPublic.getString("content").getOrElse("") should include ("""<article class="textus-content">""")
+      smartdoxPublic.getString("content").getOrElse("") should include ("<h1>SmartDox Title</h1>")
+      smartdoxPublic.getString("content").getOrElse("") should include ("<strong>bold</strong>")
     }
 
     "generate unique editor slugs from titles when slug is omitted" in {
@@ -665,6 +726,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       newHtml should include ("data-editor-form")
       newHtml should include ("textus.form.page")
       newHtml should include ("value=\"new\"")
+      newHtml should include ("name=\"contentMarkup\"")
+      newHtml should include ("data-editor-markup")
+      newHtml should include ("value=\"markdown-gfm\"")
+      newHtml should not include ("<article>\\n  <p></p>\\n</article>")
       newHtml should include ("data-open-image-picker")
       newHtml should include ("data-image-dialog")
       newHtml should include ("data-tag-input")
@@ -675,6 +740,8 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       updateHtml should include ("data-editor-form")
       updateHtml should include ("value=\"update\"")
       updateHtml should include ("name=\"id\"")
+      updateHtml should include ("name=\"contentMarkup\"")
+      updateHtml should include ("data-editor-markup")
       updateHtml should include ("Without JavaScript")
       updateHtml should include ("data-tag-input")
       updateHtml should include ("data-tag-suggestions")
@@ -686,6 +753,11 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       blogJs should include ("normalizedTagValues")
       blogJs should include ("renderTagSuggestions")
       blogJs should include ("appendTagPath")
+      blogJs should include ("function imageReferenceSnippet")
+      blogJs should include ("function syncEditorMarkupValue")
+      blogJs should include ("![](${src})")
+      blogJs should include ("[[${src}]]")
+      blogJs should include ("post ? contentSource(post) : \"\"")
       blogJs should include ("is-active")
       blogJs should include ("data-list-section")
       blogJs should include ("data-detail-section")
@@ -701,6 +773,7 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       blogCss should not include ("article-pane")
       blogCss should not include (".tag-nav-panel")
       blogCss should not include ("feed-tools")
+      blogCss should include (".tag-filter:has(span:empty)")
 
       val publicResultHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicblogs__success.html"))
       publicResultHtml should include ("textus:card-list")
@@ -722,7 +795,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       userPostHtml should include ("/form/blog-component/blog/save-editor-post")
       userPostHtml should include ("value=\"${result.body.shortid}\"")
       userPostHtml should include ("name=\"publish\" value=\"${result.body.post_status}\"")
-      userPostHtml should include ("${result.body.content}</textarea>")
+      userPostHtml should include ("name=\"contentMarkup\"")
+      userPostHtml should include ("data-editor-markup-value")
+      userPostHtml should include ("data-current-content-markup=\"${result.body.contentMarkup}\"")
+      userPostHtml should include ("${result.body.contentSource}</textarea>")
       userPostHtml should include ("data-tag-input")
       userPostHtml should include ("data-tag-suggestions")
       userPostHtml should include ("data-page=\"result-edit\"")

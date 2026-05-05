@@ -41,6 +41,10 @@ form:
   blog-component.blog.save-editor-post:
     enabled: true
     controls:
+      contentMarkup:
+        type: select
+        values: [html-fragment, markdown-gfm, smartdox]
+        required: false
       content:
         type: textarea
         required: true
@@ -49,6 +53,10 @@ form:
     successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
     stayOnError: true
     controls:
+      contentMarkup:
+        type: select
+        values: [html-fragment, markdown-gfm, smartdox]
+        required: false
       content:
         type: textarea
         required: true
@@ -57,6 +65,10 @@ form:
     successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
     stayOnError: true
     controls:
+      contentMarkup:
+        type: select
+        values: [html-fragment, markdown-gfm, smartdox]
+        required: false
       content:
         type: textarea
         required: true

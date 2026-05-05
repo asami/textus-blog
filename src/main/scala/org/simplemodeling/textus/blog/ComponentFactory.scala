@@ -98,7 +98,7 @@ private[blog] final case class BlogProjectionRow(
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  5, 2026
+ * @version May.  6, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactory
@@ -487,9 +487,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       target <- _optional_blog_post(record, "id")
       title <- exec_from(_required_string(record, "title"))
       rawContent <- exec_from(_required_string(record, "content"))
+      contentMarkup <- exec_from(_content_markup(record))
       normalized <- content_normalize_references(
         ContentReferenceContent(
-          InlineImageMarkup.HtmlFragment,
+          _inline_image_markup(contentMarkup),
           rawContent,
           None
         )
@@ -510,6 +511,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               contentAttributes = _html_content_attributes(
                 org.simplemodeling.model.value.ContentAttributes.Builder(post.contentAttributes),
                 content,
+                contentMarkup,
                 contentReferences
               ),
               securityAttributes = _blog_security(owner, publish)
@@ -541,6 +543,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               contentAttributes = _html_content_attributes(
                 ContentAttributes.Builder(),
                 content,
+                contentMarkup,
                 contentReferences
               ),
               lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
@@ -677,14 +680,15 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       tagRefs <- exec_from(_tag_refs(record))
       _ <- exec_from(_validate_registration_image_specs(entityImageSpecs, treeRoot))
       rawContent <- exec_from(_required_string(record, "content"))
+      contentMarkup <- exec_from(_content_markup(record))
       normalized <- content_normalize_references(
         ContentReferenceContent(
-          InlineImageMarkup.HtmlFragment,
+          _inline_image_markup(contentMarkup),
           rawContent,
           treeRoot.map(FileBundle.Directory(_))
         )
       )
-      post <- _blog_post(record, normalized.normalizedText, normalized.references)
+      post <- _blog_post(record, normalized.normalizedText, contentMarkup, normalized.references)
       _ <- content_validate_references(normalized.references)
       created <- _create_blog_post(post)
       postId = created.id
@@ -961,6 +965,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   private def _blog_post(
     record: Record,
     normalizedContent: String,
+    contentMarkup: ContentMarkup,
     contentReferences: Vector[ContentReferenceOccurrence]
   ): ExecUowM[BlogPostCreate] = {
     val slug = _required_string(record, "slug")
@@ -977,6 +982,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         contentAttributes = _html_content_attributes(
           ContentAttributes.Builder(),
           normalizedContent,
+          contentMarkup,
           contentReferences
         ),
         lifecycleAttributes = LifecycleAttributes(java.time.Instant.EPOCH, java.time.Instant.EPOCH, org.goldenport.datatype.Identifier("system"), org.goldenport.datatype.Identifier("system"), if (publish) PostStatus.Published else PostStatus.Draft, Aliveness.Alive),
@@ -993,13 +999,14 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   private def _html_content_attributes(
     builder: ContentAttributes.Builder,
     content: String,
+    markup: ContentMarkup,
     references: Vector[ContentReferenceOccurrence]
   ): ContentAttributes =
     builder
       .withContent(content)
-      .withMimeType(MimeType.TEXT_HTML)
+      .withMimeType(_content_mime_type(markup))
       .withCharset(StandardCharsets.UTF_8)
-      .withMarkup(ContentMarkup.HtmlFragment)
+      .withMarkup(markup)
       .withReferences(references)
       .build()
 
@@ -1070,6 +1077,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       "slug" -> draft.slug.getOrElse(_slug_from_title(draft.title)),
       "title" -> draft.title,
       "content" -> normalizedReferences.map(_.normalizedText).getOrElse(draft.content),
+      "contentMarkup" -> ContentMarkup.HtmlFragment.value,
       "publish" -> _boolean(source, "publish").getOrElse(false),
       "description" -> draft.description,
       "canonicalPath" -> draft.canonicalPath,
@@ -1326,6 +1334,27 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
 
   private def _required_string(record: Record, names: String*): Consequence[String] =
     _string(record, names*).map(Consequence.success).getOrElse(Consequence.argumentMissing(names.head))
+
+  private def _content_markup(record: Record): Consequence[ContentMarkup] =
+    _string(record, "contentMarkup", "content_markup")
+      .map(ContentMarkup.parseC)
+      .getOrElse(Consequence.success(ContentMarkup.HtmlFragment))
+
+  private def _inline_image_markup(markup: ContentMarkup): InlineImageMarkup =
+    markup match {
+      case m if m == ContentMarkup.HtmlFragment => InlineImageMarkup.HtmlFragment
+      case m if m == ContentMarkup.MarkdownGfm => InlineImageMarkup.Markdown
+      case m if m == ContentMarkup.SmartDox => InlineImageMarkup.SmartDox
+      case _ => InlineImageMarkup.HtmlFragment
+    }
+
+  private def _content_mime_type(markup: ContentMarkup): MimeType =
+    markup match {
+      case m if m == ContentMarkup.HtmlFragment => MimeType.TEXT_HTML
+      case m if m == ContentMarkup.MarkdownGfm => MimeType.TEXT_MARKDOWN
+      case m if m == ContentMarkup.SmartDox => MimeType.TEXT_PLAIN
+      case _ => MimeType.TEXT_HTML
+    }
 
   private def _string(record: Record, names: String*): Option[String] =
     names.iterator.flatMap(record.getAny).flatMap {
@@ -1909,7 +1938,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       for {
         projection <- _image_projection(post.id)
         tags <- _tag_summaries(post.id)
-        base = post.toRecord()
+        base = _public_post_base_record(post)
         rendered <- _render_public_content(post.contentAttributes)
       } yield {
         val representative = projection.representativeImage
@@ -1918,6 +1947,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           "shortid" -> _post_shortid(post),
           "slug" -> _post_slug(post),
           "authorId" -> post.securityAttributes.ownerId.id.value,
+          "contentSource" -> post.contentAttributes.contentText,
+          "content_source" -> post.contentAttributes.contentText,
+          "contentMarkup" -> post.contentAttributes.markup.map(_.value),
+          "content_markup" -> post.contentAttributes.markup.map(_.value),
           "representativeBlobId" -> representative.map(_.metadata.id),
           "representativeBlobUrl" -> representative.map(_.metadata.accessUrl.displayUrl),
           "imageRoles" -> projection.images.map(_image_role_record),
@@ -1926,6 +1959,9 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           "tag_paths" -> tags.flatMap(_.getString("path")).mkString(", ")
         )
       }
+
+    private def _public_post_base_record(post: BlogPost): Record =
+      Record(post.toRecord().fields.filterNot(_.key == "content"))
 
     private def _render_public_content(content: ContentAttributes): Consequence[Option[String]] =
       content.content match {

@@ -47,6 +47,14 @@
           <span class="form-text">Optional. Use a stable, unique URL name for SEO; leave blank to generate one from the title.</span>
         </label>
         <label>
+          Content format
+          <select class="form-select" name="contentMarkup" data-editor-markup>
+            <option value="html-fragment" selected>HTML</option>
+            <option value="markdown-gfm">Markdown</option>
+            <option value="smartdox">SmartDox</option>
+          </select>
+        </label>
+        <label>
           Content
           <textarea class="form-control" name="content" data-editor-content required></textarea>
         </label>
