@@ -13,6 +13,7 @@ import org.goldenport.cncf.component.{ComponentCreate, ComponentOrigin}
 import org.goldenport.cncf.context.{ExecutionContext, IdGenerationContext, SecurityContext}
 import org.goldenport.cncf.entity.EntityStore
 import org.goldenport.cncf.operation.{CmlEntityRelationshipDefinition, CmlOperationAssociationBinding}
+import org.goldenport.cncf.tag.{TagCreate, TagRepository, TagSpace}
 import org.goldenport.cncf.subsystem.DefaultSubsystemFactory
 import org.goldenport.datatype.{ContentType, FileBundle, MimeBody}
 import org.goldenport.protocol.{Property, Request}
@@ -25,7 +26,7 @@ import org.simplemodeling.textus.blog.entity.BlogPost
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  4, 2026
+ * @version May.  5, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactorySpec extends AnyWordSpec with Matchers {
@@ -1038,6 +1039,65 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       result.getInt("fetchedCount") shouldBe Some(1)
       val records = _records(result, "data")
       records.map(_.getString("title")) shouldBe Vector(Some(s"$needle Published"))
+    }
+
+    "sync BlogPost tags in shared blog tag space and filter public posts by parent tag" in {
+      val subsystem = DefaultSubsystemFactory.default(Some("command"))
+      val component = (new ComponentFactory)
+        .create(ComponentCreate(subsystem, ComponentOrigin.Repository("test")))
+        .primary
+      given ExecutionContext = _with_authenticated_principal(
+        ExecutionContext.withFrameworkCommandExecutionMode(component.logic.executionContext(), CommandExecutionMode.SyncJob),
+        "author_tags"
+      )
+      val tagRepository = TagRepository.entityStore()
+      val root = _success(tagRepository.create(TagCreate(None, "phase20blog", None, tagSpace = TagSpace.Blog)))
+      val child = _success(tagRepository.create(TagCreate(None, "scala", Some(root.id), tagSpace = TagSpace.Blog)))
+      val other = _success(tagRepository.create(TagCreate(None, "life", None, tagSpace = TagSpace.Blog)))
+
+      val tagged = RegisterBlogPost.unsafeForTest(
+        Request.of("blog", "blog", "registerPost"),
+        Record.dataAuto(
+          "slug" -> "tagged-scala-post",
+          "title" -> "Tagged Scala Post",
+          "content" -> "<article><p>Tagged</p></article>",
+          "publish" -> true,
+          "tags" -> Vector(child.path)
+        )
+      )
+      val untagged = RegisterBlogPost.unsafeForTest(
+        Request.of("blog", "blog", "registerPost"),
+        Record.dataAuto(
+          "slug" -> "tagged-life-post",
+          "title" -> "Tagged Life Post",
+          "content" -> "<article><p>Other</p></article>",
+          "publish" -> true,
+          "tags" -> Vector(other.path)
+        )
+      )
+      val taggedRecord = _record(_success(component.logic.executeAction(tagged, summon[ExecutionContext])))
+      _success(component.logic.executeAction(untagged, summon[ExecutionContext]))
+      val postId = taggedRecord.getAsC[EntityId]("id").toOption.flatten.getOrElse(fail("tagged post id missing"))
+
+      val detail = _record(_success(component.logic.executeAction(
+        GetBlogPost.unsafeForTest(Request.of("blog", "blog", "getPost"), Record.dataAuto("id" -> postId)),
+        summon[ExecutionContext]
+      )))
+      val detailTags = _records(detail, "tags")
+      detailTags.map(_.getString("path")) should contain (Some(child.path))
+
+      val parentSearch = _record(_success(component.logic.executeAction(
+        SearchBlogPosts.unsafeForTest(Request.of("blog", "blog", "searchPosts"), Record.dataAuto("tag" -> root.path)),
+        summon[ExecutionContext]
+      )))
+      val directSearch = _record(_success(component.logic.executeAction(
+        SearchBlogPosts.unsafeForTest(Request.of("blog", "blog", "searchPosts"), Record.dataAuto("tag" -> root.path, "includeDescendants" -> false)),
+        summon[ExecutionContext]
+      )))
+
+      _records(parentSearch, "data").map(_.getString("slug")) should contain (Some("tagged-scala-post"))
+      _records(parentSearch, "data").map(_.getString("slug")) should not contain Some("tagged-life-post")
+      _records(directSearch, "data").map(_.getString("slug")) should not contain Some("tagged-scala-post")
     }
 
     "render Atom feed XML for published active posts" in {

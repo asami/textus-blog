@@ -23,7 +23,7 @@ lazy val root = project
   .settings(
     organization := "org.textus",
     name := "textus-blog",
-    version := "0.0.1",
+    version := "0.0.2-SNAPSHOT",
 
     scalaVersion := scala3Version,
 

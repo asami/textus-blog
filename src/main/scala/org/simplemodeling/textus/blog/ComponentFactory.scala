@@ -21,6 +21,7 @@ import org.goldenport.cncf.feed.{AtomFeedProjection, AtomFeedRenderer}
 import org.goldenport.cncf.id.TextusUrn
 import org.goldenport.cncf.operation.{CmlOperationAssociationBinding, CmlOperationImageBinding}
 import org.goldenport.cncf.security.SecuritySubject
+import org.goldenport.cncf.tag.{TagAttachmentSummary, TagSpace, TaggingWorkflow}
 import org.goldenport.cncf.unitofwork.{ExecUowM, UnitOfWorkOp}
 import org.goldenport.datatype.{ContentType, FileBundle, MimeType}
 import org.goldenport.datatype.ObjectId
@@ -54,6 +55,7 @@ private[blog] final case class BlogProjectionRow(
   representativeBlobId: Option[EntityId],
   representativeBlobUrl: Option[String],
   imageRoles: Vector[Record],
+  tags: Vector[Record],
   searchText: String,
   renderedContent: Option[String]
 ) {
@@ -83,14 +85,15 @@ private[blog] final case class BlogProjectionRow(
       "updatedAt" -> updatedAt,
       "representativeBlobId" -> representativeBlobId,
       "representativeBlobUrl" -> representativeBlobUrl,
-      "imageRoles" -> imageRoles
+      "imageRoles" -> imageRoles,
+      "tags" -> tags
     )
 }
 
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  4, 2026
+ * @version May.  5, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactory
@@ -299,7 +302,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val responseQuery = Query.plan(action.record, limit = _int(action.record, "limit"), offset = _int(action.record, "offset"))
       for {
         rows <- _published_blog_view_rows(storeQuery)
-        visible = _filter_projection_search_text(rows, action.record)
+        tagged <- _filter_projection_tags(rows, action.record)
+        visible = _filter_projection_search_text(tagged, action.record)
         page = _page(visible, action.record)
         records = page.map(_.toListRecord)
       } yield OperationResponse(
@@ -324,7 +328,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val responseQuery = Query.plan(action.record, limit = _int(action.record, "limit"), offset = _int(action.record, "offset"))
       for {
         rows <- _author_blog_view_rows(storeQuery)
-        visible = _filter_projection_search_text(_sort_projection_rows(rows), action.record)
+        tagged <- _filter_projection_tags(_sort_projection_rows(rows), action.record)
+        visible = _filter_projection_search_text(tagged, action.record)
         page = _page(visible, action.record)
         records = page.map(_.toListRecord)
       } yield OperationResponse(
@@ -348,7 +353,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       val storeQuery = Query.plan(Record.empty)
       for {
         rows <- _blog_feed_view_rows(storeQuery)
-        visible = _filter_projection_search_text(rows, action.record)
+        tagged <- _filter_projection_tags(rows, action.record)
+        visible = _filter_projection_search_text(tagged, action.record)
         page = _page_with_default(_sort_projection_rows(visible), action.record, 20)
         records = page.map(_.toFeedRecord)
         baseUrl <- exec_from(AtomFeedProjection.resolveSiteBaseUrl(request, executionContext.runtime.resolvedParameters))
@@ -471,10 +477,12 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       explicitSlug = _string(record, "slug")
       contentReferences = normalized.references
       _ <- content_validate_references(contentReferences)
+      tagRefs <- exec_from(_tag_refs(record))
       publish = _boolean(record, "publish").getOrElse(false)
       saved <- target match {
         case Some(post) =>
           for {
+            oldTagRefs <- _current_blog_tag_refs(post.id)
             slug <- explicitSlug.map(_unique_blog_slug(_, Some(post.id))).getOrElse(exec_pure(_post_slug(post)))
             updated0 = post.copy(
               nameAttributes = org.simplemodeling.model.value.NameAttributes.Builder(post.nameAttributes).withName(slug).withTitle(title).build(),
@@ -491,6 +499,13 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
               entity_save(post).flatMap { _ =>
                 _ignore_failure(_sync_content_references(post.id, post.contentAttributes.references)).flatMap { _ =>
                   exec_from(Consequence.Failure[Int](conclusion))
+                }
+              }
+            }
+            _ <- _recover_with(_sync_blog_tags(updated.id, tagRefs)) { conclusion =>
+              entity_save(post).flatMap { _ =>
+                _ignore_failure(_sync_blog_tags(post.id, oldTagRefs)).flatMap { _ =>
+                  exec_from(Consequence.Failure[TagAttachmentSummary](conclusion))
                 }
               }
             }
@@ -517,7 +532,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
             )
             created <- _create_blog_post(post)
             inlineCount <- _cleanup_created_blog_post_on_failure(created.id) {
-              _sync_content_references(created.id, contentReferences)
+              for {
+                count <- _sync_content_references(created.id, contentReferences)
+                _ <- _sync_blog_tags(created.id, tagRefs)
+              } yield count
             }
           } yield (created.id, created.record.getOrElse(post.toRecord()), inlineCount)
       }
@@ -635,6 +653,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
     for {
       _ <- exec_from(_reject_external_content_references(record))
       entityImageSpecs <- exec_from(_entity_image_specs(record))
+      tagRefs <- exec_from(_tag_refs(record))
       _ <- exec_from(_validate_registration_image_specs(entityImageSpecs, treeRoot))
       rawContent <- exec_from(_required_string(record, "content"))
       normalized <- content_normalize_references(
@@ -652,6 +671,7 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         for {
           inline <- _sync_content_references(postId, normalized.references)
           entityImages <- _create_entity_images(postId, entityImageSpecs, treeRoot)
+          _ <- _sync_blog_tags(postId, tagRefs)
         } yield (entityImages, inline)
       }
       _ <- exec_from(_invalidate_blog_views())
@@ -748,6 +768,21 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
       _ <- content_sync_inline_references(_association_source_id(postId), references)
     } yield _inline_image_count(references)
 
+  private def _sync_blog_tags(
+    postId: EntityId,
+    tagRefs: Vector[String]
+  ): ExecUowM[TagAttachmentSummary] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    exec_from(TaggingWorkflow(tagSpace = TagSpace.Blog).sync(_association_source_id(postId), tagRefs, role = "tag"))
+  }
+
+  private def _current_blog_tag_refs(
+    postId: EntityId
+  ): ExecUowM[Vector[String]] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    exec_from(TaggingWorkflow(tagSpace = TagSpace.Blog).listEntityTags(_association_source_id(postId), Some("tag")).map(_.tags.map(_.id.value)))
+  }
+
   private def _inline_image_count(
     references: Vector[ContentReferenceOccurrence]
   ): Int =
@@ -760,8 +795,10 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
   ): ExecUowM[A] =
     _recover_with(program) { conclusion =>
       _ignore_failure(_delete_existing_blob_associations(postId)).flatMap { _ =>
-        _ignore_failure(entity_delete(postId)).flatMap { _ =>
-          exec_from(Consequence.Failure[A](conclusion))
+        _ignore_failure(_delete_existing_tag_associations(postId)).flatMap { _ =>
+          _ignore_failure(entity_delete(postId)).flatMap { _ =>
+            exec_from(Consequence.Failure[A](conclusion))
+          }
         }
       }
     }
@@ -821,6 +858,21 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           case (z, (repository, association)) =>
             z.flatMap(_ => exec_from(_delete_association_if_present(repository, association)))
         }
+      }
+    }
+  }
+
+  private def _delete_existing_tag_associations(postId: EntityId): ExecUowM[Unit] = {
+    given org.goldenport.cncf.context.ExecutionContext = executionContext
+    val repository = AssociationRepository.entityStore(AssociationStoragePolicy.tagAttachmentDefault)
+    exec_from(repository.list(AssociationFilter(
+      domain = AssociationDomain.TagAttachment,
+      sourceEntityId = Some(_association_source_id(postId)),
+      targetKind = Some("tag")
+    ))).flatMap { values =>
+      values.foldLeft(exec_pure(())) {
+        case (z, association) =>
+          z.flatMap(_ => exec_from(_delete_association_if_present(repository, association)))
       }
     }
   }
@@ -1022,6 +1074,29 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           else
             BlogEntityImageSpec.createC(item).map(xs :+ _)
         }
+    }
+
+  private def _tag_refs(record: Record): Consequence[Vector[String]] =
+    Consequence.success(
+      Vector("tags", "tagRefs", "tag_refs", "tagPaths", "tag_paths", "tag", "tagRef", "tag_ref", "tagPath", "tag_path")
+        .flatMap(name => _tag_ref_values(record.getAny(name)))
+        .map(_.trim)
+        .filter(_.nonEmpty)
+        .distinct
+    )
+
+  private def _tag_ref_values(value: Option[Any]): Vector[String] =
+    value match {
+      case Some(xs: Seq[?]) => xs.toVector.flatMap(x => _tag_ref_values(Some(x)))
+      case Some(xs: Array[?]) => xs.toVector.flatMap(x => _tag_ref_values(Some(x)))
+      case Some(r: Record) =>
+        Vector("id", "tagRef", "tag_ref", "path", "key", "name").iterator.flatMap(r.getAny).map(_.toString).toVector.take(1)
+      case Some(s: String) =>
+        s.split("[,\\n]").toVector.map(_.trim).filter(_.nonEmpty)
+      case Some(other) =>
+        Vector(other.toString)
+      case None =>
+        Vector.empty
     }
 
   private def _has_any(record: Record, names: String*): Boolean =
@@ -1684,9 +1759,51 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
         rows.filter(_.searchText.contains(needle))
       }
 
+    protected final def _filter_projection_tags(
+      rows: Vector[BlogProjectionRow],
+      record: Record
+    ): ExecUowM[Vector[BlogProjectionRow]] =
+      _tag_filter_ref(record) match {
+        case Some(ref) =>
+          given org.goldenport.cncf.context.ExecutionContext = executionContext
+          val include = _boolean_value(record, "includeDescendants", "include_descendants").getOrElse(true)
+          exec_from(TaggingWorkflow(tagSpace = TagSpace.Blog).searchSourceIds(ref, include, Some("tag"))).map { ids =>
+            rows.filter(row => ids.contains(row.entityId.value))
+          }
+        case None =>
+          exec_pure(rows)
+      }
+
+    private def _tag_filter_ref(record: Record): Option[String] =
+      Vector("tag", "tagRef", "tag_ref", "tagPath", "tag_path", "tagId", "tag_id")
+        .iterator
+        .flatMap(name => record.getAny(name).map(_.toString.trim).filter(_.nonEmpty))
+        .nextOption()
+
+    private def _boolean_value(record: Record, names: String*): Option[Boolean] =
+      names.iterator.flatMap(record.getAny).flatMap {
+        case value if java.util.Objects.isNull(value) => None
+        case b: java.lang.Boolean => Some(b.booleanValue)
+        case s: String => _boolean_text(s)
+        case other => _boolean_text(other.toString)
+      }.nextOption()
+
+    private def _boolean_text(value: String): Option[Boolean] =
+      value.trim.toLowerCase(java.util.Locale.ROOT) match {
+        case "true" | "on" | "yes" | "1" => Some(true)
+        case "false" | "off" | "no" | "0" => Some(false)
+        case other => scala.util.Try(other.toBoolean).toOption
+      }
+
+    private def _tag_summaries(postId: EntityId): Consequence[Vector[Record]] = {
+      given org.goldenport.cncf.context.ExecutionContext = executionContext
+      TaggingWorkflow(tagSpace = TagSpace.Blog).tagSummaryRecords(postId.value)
+    }
+
     protected final def _public_post_record(post: BlogPost): Consequence[Record] =
       for {
         projection <- _image_projection(post.id)
+        tags <- _tag_summaries(post.id)
         base = post.toRecord()
         rendered <- _render_public_content(post.contentAttributes)
       } yield {
@@ -1698,7 +1815,8 @@ class BlogComponentRuntimeFactory extends BlogComponentComponent.Factory {
           "authorId" -> post.securityAttributes.ownerId.id.value,
           "representativeBlobId" -> representative.map(_.metadata.id),
           "representativeBlobUrl" -> representative.map(_.metadata.accessUrl.displayUrl),
-          "imageRoles" -> projection.images.map(_image_role_record)
+          "imageRoles" -> projection.images.map(_image_role_record),
+          "tags" -> tags
         )
       }
 
@@ -1886,6 +2004,7 @@ object BlogComponentRuntimeFactory {
     val record = post.toRecord()
     for {
       projection <- _image_projection(post.id)
+      tags <- _tag_summaries(post.id)
       rendered <- if (includeRenderedContent) _render_public_content(component, post.contentAttributes) else Consequence.success(None)
     } yield {
       val representative = projection.representativeImage
@@ -1903,10 +2022,15 @@ object BlogComponentRuntimeFactory {
         representativeBlobId = representative.map(_.metadata.id),
         representativeBlobUrl = representative.map(_.metadata.accessUrl.displayUrl),
         imageRoles = projection.images.map(_image_role_record),
+        tags = tags,
         searchText = _search_text(record),
         renderedContent = rendered
       )
     }
+  }
+
+  private def _tag_summaries(postId: EntityId)(using ExecutionContext): Consequence[Vector[Record]] = {
+    TaggingWorkflow(tagSpace = TagSpace.Blog).tagSummaryRecords(postId.value)
   }
 
   private def _is_public_post(post: BlogPost): Boolean =
