@@ -6,7 +6,11 @@
   </head>
   <body data-page="reader">
     ${partial.navigation-public}
-    ${content}
+    <main class="container py-4">
+      <article class="textus-app-article">
+        ${content}
+      </article>
+    </main>
     ${partial.feed-footer}
     <div class="toast" data-toast hidden></div>
     ${partial.scripts}

@@ -6,6 +6,7 @@ apps:
     root: /web/blog
     route: /web/blog
     layout: default
+    composition: article
     assets:
       css:
         - /web/blog/assets/blog.css
@@ -15,14 +16,19 @@ apps:
 pages:
   index:
     layout: default
+    mode: article
   publicblogs:
     layout: reader
+    mode: article
   userblogs:
     layout: my
+    mode: article
   new:
     layout: edit
+    mode: article
   update:
     layout: edit
+    mode: article
 
 expose:
   blog-component.blog.import-post-tree: protected

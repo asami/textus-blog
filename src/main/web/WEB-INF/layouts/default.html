@@ -6,7 +6,11 @@
   </head>
   <body data-page="home">
     ${partial.navigation-public}
-    ${content}
+    <main class="container py-5">
+      <article class="textus-app-article">
+        ${content}
+      </article>
+    </main>
     <div class="toast" data-toast hidden></div>
     ${partial.scripts}
   </body>
