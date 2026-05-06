@@ -5,11 +5,24 @@ apps:
     path: /web/blog
     root: /web/blog
     route: /web/blog
+    layout: default
     assets:
       css:
         - /web/blog/assets/blog.css
       js:
         - /web/blog/assets/blog.js
+
+pages:
+  index:
+    layout: default
+  publicblogs:
+    layout: reader
+  userblogs:
+    layout: my
+  new:
+    layout: edit
+  update:
+    layout: edit
 
 expose:
   blog-component.blog.import-post-tree: protected
@@ -31,6 +44,7 @@ expose:
 form:
   blog-component.blog.import-post-tree:
     enabled: true
+    layout: plain-result
     successRedirect: /web/blog/userblogs
     stayOnError: true
     controls:
@@ -40,6 +54,7 @@ form:
         required: true
   blog-component.blog.save-editor-post:
     enabled: true
+    layout: plain-result
     controls:
       contentMarkup:
         type: select
@@ -50,6 +65,7 @@ form:
         required: true
   blog-component.blog.register-post:
     enabled: true
+    layout: plain-result
     successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
     stayOnError: true
     controls:
@@ -62,6 +78,7 @@ form:
         required: true
   blog-component.blog.create-post:
     enabled: true
+    layout: plain-result
     successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
     stayOnError: true
     controls:
@@ -74,10 +91,18 @@ form:
         required: true
   blog-component.blog.search-posts:
     enabled: true
+    layout: reader
     stayOnError: true
   blog-component.blog.search-my-posts:
     enabled: true
+    layout: my
     stayOnError: true
+  blog-component.blog.get-post:
+    enabled: true
+    layout: reader
+  blog-component.blog.get-my-post:
+    enabled: true
+    layout: result-edit
   blog-component.blog.search-inline-images:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-inline-image

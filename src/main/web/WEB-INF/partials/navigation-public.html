@@ -1,0 +1,15 @@
+<header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
+  <div class="container-fluid">
+    <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
+    <nav class="d-flex align-items-center gap-3">
+      <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
+      <a class="nav-link" href="/web/blog/userblogs" data-my-posts-link hidden>My posts</a>
+      <a class="nav-link" href="/web/textus-user-account/signin?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-login-link>Log in</a>
+      <a class="btn btn-sm btn-outline-primary" href="/web/textus-user-account/signup?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-signup-link>Create account</a>
+      <form action="/web/blog/logout" method="post" data-logout-form hidden>
+        <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
+      </form>
+      <span class="text-secondary small" data-session-name></span>
+    </nav>
+  </div>
+</header>

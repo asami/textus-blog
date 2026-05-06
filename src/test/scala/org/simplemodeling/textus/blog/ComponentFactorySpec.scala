@@ -668,6 +668,18 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       java.nio.file.Files.exists(root.resolve("src/main/web/userblogs__success.html")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/userpost__success.html")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/update__error.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/layouts/default.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/layouts/reader.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/layouts/my.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/layouts/edit.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/layouts/result-edit.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/layouts/plain-result.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/partials/head.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/partials/navigation-public.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/partials/navigation-user.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/partials/navigation-edit.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/partials/feed-footer.html")) shouldBe true
+      java.nio.file.Files.exists(root.resolve("src/main/web/WEB-INF/partials/scripts.html")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/assets/blog.css")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/assets/blog.js")) shouldBe true
       java.nio.file.Files.exists(root.resolve("src/main/web/blog/index.html")) shouldBe false
@@ -676,19 +688,28 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       val webYaml = java.nio.file.Files.readString(root.resolve("src/main/car/web/web.yaml"))
       webYaml should include ("/web/blog")
+      webYaml should include ("layout: default")
+      webYaml should include ("pages:")
+      webYaml should include ("publicblogs:\n    layout: reader")
+      webYaml should include ("userblogs:\n    layout: my")
+      webYaml should include ("new:\n    layout: edit")
+      webYaml should include ("update:\n    layout: edit")
+      webYaml should include ("blog-component.blog.search-posts:\n    enabled: true\n    layout: reader")
+      webYaml should include ("blog-component.blog.search-my-posts:\n    enabled: true\n    layout: my")
+      webYaml should include ("blog-component.blog.get-post:\n    enabled: true\n    layout: reader")
+      webYaml should include ("blog-component.blog.get-my-post:\n    enabled: true\n    layout: result-edit")
       webYaml should not include "blog-my"
       webYaml should not include "blog-edit"
-      webYaml should include ("blog-component.blog.search-posts:\n    enabled: true\n    stayOnError: true")
-      webYaml should include ("blog-component.blog.search-my-posts:\n    enabled: true\n    stayOnError: true")
       webYaml should include ("blog-component.blog.search-my-posts: protected")
       webYaml should include ("blog-component.blog.get-my-post: protected")
 
       val publicHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicblogs.html"))
-      publicHtml should include ("returnTo=%2Fweb%2Fblog%2Fuserblogs")
-      publicHtml should include ("/web/assets/bootstrap.min.css")
-      publicHtml should include ("/web/assets/textus-widgets.css")
+      publicHtml should not include ("<!doctype html")
+      publicHtml should not include ("<head>")
+      publicHtml should not include ("navbar navbar-expand-lg")
+      publicHtml should not include ("/web/assets/bootstrap.min.css")
+      publicHtml should not include ("/web/assets/textus-widgets.css")
       publicHtml should include ("/form/blog-component/blog/search-posts")
-      publicHtml should include ("data-my-posts-link")
       publicHtml should include ("data-tag-nav")
       publicHtml should include ("data-list-section")
       publicHtml should include ("data-detail-section")
@@ -697,12 +718,11 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       publicHtml should include ("alert alert-info")
       publicHtml should include ("data-tag-filter hidden")
       publicHtml should include ("d-none flex-wrap")
-      publicHtml should include ("<footer class=\"container py-3 border-top\">")
       publicHtml should include ("Browse tags")
       publicHtml should include ("data-tag-filter-input")
       publicHtml should include ("placeholder=\"Tag path\"")
       publicHtml should include ("data-tag-clear")
-      publicHtml should include ("/rest/v1/blog/blog/atomFeed")
+      publicHtml should not include ("/rest/v1/blog/blog/atomFeed")
       publicHtml should not include ("list-toolbar")
       publicHtml should not include ("reader-pane")
       publicHtml should not include ("article-pane")
@@ -713,12 +733,44 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       publicHtml should not include "data-editor-form"
       publicHtml should not include "data-upload-form"
 
+      val publicNavigation = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/navigation-public.html"))
+      publicNavigation should include ("returnTo=%2Fweb%2Fblog%2Fuserblogs")
+      publicNavigation should include ("data-my-posts-link")
+      publicNavigation should include ("data-login-link")
+      publicNavigation should include ("data-signup-link")
+      publicNavigation should include ("data-logout-form")
+      val feedFooter = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/feed-footer.html"))
+      feedFooter should include ("/rest/v1/blog/blog/atomFeed")
+      val headPartial = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/head.html"))
+      headPartial should include ("/web/assets/bootstrap.min.css")
+      headPartial should include ("/web/assets/textus-widgets.css")
+      headPartial should include ("/web/blog/assets/blog.css")
+      val scriptsPartial = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/scripts.html"))
+      scriptsPartial should include ("/web/assets/bootstrap.bundle.min.js")
+      scriptsPartial should include ("/web/assets/textus-widgets.js")
+      scriptsPartial should include ("/web/blog/assets/blog.js")
+      val readerLayout = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/layouts/reader.html"))
+      readerLayout should include ("data-page=\"reader\"")
+      readerLayout should include ("${partial.navigation-public}")
+      readerLayout should include ("${content}")
+      readerLayout should include ("${partial.feed-footer}")
+      val myLayout = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/layouts/my.html"))
+      myLayout should include ("data-page=\"my\"")
+      myLayout should include ("${partial.navigation-user}")
+      val editLayout = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/layouts/edit.html"))
+      editLayout should include ("data-page=\"edit\"")
+      editLayout should include ("${partial.navigation-edit}")
+      val resultEditLayout = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/layouts/result-edit.html"))
+      resultEditLayout should include ("data-page=\"result-edit\"")
+
       val myHtml = java.nio.file.Files.readString(root.resolve("src/main/web/userblogs.html"))
+      myHtml should not include ("<!doctype html")
+      myHtml should not include ("navbar navbar-expand-lg")
       myHtml should include ("data-my-post-list")
       myHtml should include ("data-open-upload-dialog")
       myHtml should include ("data-upload-form")
       myHtml should include ("/web/blog/new")
-      myHtml should include ("<a class=\"nav-link\" href=\"/web/blog/jobs\">My jobs</a>")
+      java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/navigation-user.html")) should include ("<a class=\"nav-link\" href=\"/web/blog/jobs\">My jobs</a>")
       myHtml should not include ("btn btn-outline-secondary\" href=\"/web/blog/jobs\"")
       myHtml should include ("/form/blog-component/blog/search-my-posts")
       myHtml should include ("card mb-3")
@@ -731,6 +783,8 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       myHtml should not include ("<dialog")
 
       val newHtml = java.nio.file.Files.readString(root.resolve("src/main/web/new.html"))
+      newHtml should not include ("<!doctype html")
+      newHtml should not include ("navbar navbar-expand-lg")
       newHtml should include ("data-editor-form")
       newHtml should include ("textus.form.page")
       newHtml should include ("value=\"new\"")
@@ -751,6 +805,8 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       newHtml should not include ("<dialog")
 
       val updateHtml = java.nio.file.Files.readString(root.resolve("src/main/web/update.html"))
+      updateHtml should not include ("<!doctype html")
+      updateHtml should not include ("navbar navbar-expand-lg")
       updateHtml should include ("data-editor-form")
       updateHtml should include ("value=\"update\"")
       updateHtml should include ("Post metadata")
@@ -800,6 +856,8 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       blogCss should include (".tag-filter:has(span:empty)")
 
       val publicResultHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicblogs__success.html"))
+      publicResultHtml should not include ("<!doctype html")
+      publicResultHtml should not include ("navbar navbar-expand-lg")
       publicResultHtml should include ("textus:card-list")
       publicResultHtml should include ("detail-param-textus.form.page=\"publicpost\"")
       publicResultHtml should include ("card mb-3")
@@ -809,13 +867,16 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       publicResultHtml should include ("Tag:")
       publicResultHtml should include ("${form.tag}")
       publicResultHtml should include ("/web/blog/publicblogs")
-      publicResultHtml should include ("<footer class=\"container py-3 border-top\">")
-      publicResultHtml should include ("/rest/v1/blog/blog/atomFeed")
-      publicResultHtml should not include ("<a class=\"nav-link\" href=\"/rest/v1/blog/blog/atomFeed\"")
+      publicResultHtml should not include ("<footer class=\"container py-3 border-top\">")
+      publicResultHtml should not include ("/rest/v1/blog/blog/atomFeed")
       val publicPostHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicpost__success.html"))
+      publicPostHtml should not include ("<!doctype html")
+      publicPostHtml should not include ("navbar navbar-expand-lg")
       publicPostHtml should include ("textus:record-card")
       publicPostHtml should include ("textus:html-field")
       val userPostHtml = java.nio.file.Files.readString(root.resolve("src/main/web/userpost__success.html"))
+      userPostHtml should not include ("<!doctype html")
+      userPostHtml should not include ("navbar navbar-expand-lg")
       userPostHtml should include ("/form/blog-component/blog/save-editor-post")
       userPostHtml should include ("value=\"${result.body.shortid}\"")
       userPostHtml should include ("name=\"publish\" value=\"${result.body.post_status}\"")
@@ -827,13 +888,15 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       userPostHtml should include ("${result.body.contentSource}</textarea>")
       userPostHtml should include ("data-tag-input")
       userPostHtml should include ("data-tag-suggestions")
-      userPostHtml should include ("data-page=\"result-edit\"")
-      userPostHtml should include ("/web/blog/assets/blog.js")
+      userPostHtml should not include ("data-page=\"result-edit\"")
+      userPostHtml should not include ("/web/blog/assets/blog.js")
       userPostHtml should include ("placeholder=\"topic, topic.subtopic\"")
       userPostHtml should include ("/web/blog/jobs")
       userPostHtml should not include "update?id=${result.body.entity_id}"
       publicResultHtml should include ("detail-param-id=\"{shortid}\"")
       val userResultHtml = java.nio.file.Files.readString(root.resolve("src/main/web/userblogs__success.html"))
+      userResultHtml should not include ("<!doctype html")
+      userResultHtml should not include ("navbar navbar-expand-lg")
       userResultHtml should include ("detail-param-id=\"{shortid}\"")
       userResultHtml should include ("card mb-3")
       userResultHtml should include ("row g-2 align-items-end")
@@ -842,7 +905,6 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       userResultHtml should include ("Tag:")
       userResultHtml should include ("${form.tag}")
       userResultHtml should include ("/web/blog/userblogs")
-      userResultHtml should include ("/web/blog/jobs")
     }
 
     "register existing Blob images through BlobAttachment Association" in {

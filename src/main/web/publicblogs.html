@@ -1,87 +1,49 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Public Blog</title>
-    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
-    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
-    <link rel="stylesheet" href="/web/blog/assets/blog.css">
-  </head>
-  <body data-page="reader">
-    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
-      <div class="container-fluid">
-        <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
-        <nav class="d-flex align-items-center gap-3">
-          <a class="nav-link" href="/web/blog/userblogs" data-my-posts-link hidden>My posts</a>
-          <a class="nav-link" href="/web/textus-user-account/signin?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-login-link>Log in</a>
-          <a class="btn btn-sm btn-outline-primary" href="/web/textus-user-account/signup?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-signup-link>Create account</a>
-          <form action="/web/blog/logout" method="post" data-logout-form hidden>
-            <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
-          </form>
-          <span class="text-secondary small" data-session-name></span>
-        </nav>
+<main class="container py-4">
+  <section data-list-section>
+    <div class="card mb-3">
+      <div class="card-body">
+        <form class="search-form row g-2 align-items-end" action="/form/blog-component/blog/search-posts" method="post" data-search-form>
+          <input type="hidden" name="textus.form.page" value="publicblogs">
+          <input type="hidden" name="limit" value="50">
+          <input type="hidden" name="includeDescendants" value="true">
+          <div class="col-12 col-md">
+            <label class="form-label" for="public-blog-search-text">Search</label>
+            <input class="form-control" id="public-blog-search-text" type="search" name="text" placeholder="Search posts" autocomplete="off">
+          </div>
+          <div class="col-12 col-md-4 col-xl-3">
+            <label class="form-label" for="public-blog-search-tag">Tag</label>
+            <input class="form-control" id="public-blog-search-tag" type="search" name="tag" data-tag-filter-input placeholder="Tag path" autocomplete="off">
+          </div>
+          <div class="col-12 col-md-auto d-grid">
+            <button class="btn btn-primary" type="submit">Search</button>
+          </div>
+        </form>
       </div>
-    </header>
+    </div>
+    <div class="tag-filter alert alert-info py-2 mb-3 d-none flex-wrap align-items-center gap-2" data-tag-filter hidden>
+      <span></span>
+      <a class="alert-link" href="/web/blog/publicblogs" data-tag-clear>Clear</a>
+    </div>
+    <section class="card mb-3" aria-label="Browse tags" data-tag-nav-panel>
+      <div class="card-body py-3">
+        <h2 class="h6 card-title mb-2">Browse tags</h2>
+        <div class="tag-nav" data-tag-nav></div>
+      </div>
+    </section>
+    <div class="post-list row g-3" data-post-list>
+      <noscript>
+        <p class="col-12 text-secondary small">Use the search form to list public posts.</p>
+      </noscript>
+    </div>
+  </section>
 
-    <main class="container py-4">
-      <section data-list-section>
-        <div class="card mb-3">
-          <div class="card-body">
-            <form class="search-form row g-2 align-items-end" action="/form/blog-component/blog/search-posts" method="post" data-search-form>
-              <input type="hidden" name="textus.form.page" value="publicblogs">
-              <input type="hidden" name="limit" value="50">
-              <input type="hidden" name="includeDescendants" value="true">
-              <div class="col-12 col-md">
-                <label class="form-label" for="public-blog-search-text">Search</label>
-                <input class="form-control" id="public-blog-search-text" type="search" name="text" placeholder="Search posts" autocomplete="off">
-              </div>
-              <div class="col-12 col-md-4 col-xl-3">
-                <label class="form-label" for="public-blog-search-tag">Tag</label>
-                <input class="form-control" id="public-blog-search-tag" type="search" name="tag" data-tag-filter-input placeholder="Tag path" autocomplete="off">
-              </div>
-              <div class="col-12 col-md-auto d-grid">
-                <button class="btn btn-primary" type="submit">Search</button>
-              </div>
-            </form>
-          </div>
-        </div>
-        <div class="tag-filter alert alert-info py-2 mb-3 d-none flex-wrap align-items-center gap-2" data-tag-filter hidden>
-          <span></span>
-          <a class="alert-link" href="/web/blog/publicblogs" data-tag-clear>Clear</a>
-        </div>
-        <section class="card mb-3" aria-label="Browse tags" data-tag-nav-panel>
-          <div class="card-body py-3">
-            <h2 class="h6 card-title mb-2">Browse tags</h2>
-            <div class="tag-nav" data-tag-nav></div>
-          </div>
-        </section>
-        <div class="post-list row g-3" data-post-list>
-          <noscript>
-            <p class="col-12 text-secondary small">Use the search form to list public posts.</p>
-          </noscript>
-        </div>
-      </section>
-
-      <section class="d-none" data-detail-section>
-        <a class="btn btn-outline-secondary btn-sm mb-3" href="/web/blog/publicblogs" data-back-to-list hidden>Back to public posts</a>
-        <article class="blog-article card" data-article>
-          <div class="card-body">
-            <h1 class="card-title" data-article-title></h1>
-            <div class="article-body" data-article-body></div>
-          </div>
-        </article>
-      </section>
-    </main>
-
-    <footer class="container py-3 border-top">
-      <span class="text-secondary small">Feed</span>
-      <a class="link-secondary small ms-2" href="/rest/v1/blog/blog/atomFeed">Atom feed</a>
-    </footer>
-
-    <div class="toast" data-toast hidden></div>
-    <script src="/web/assets/bootstrap.bundle.min.js"></script>
-    <script src="/web/assets/textus-widgets.js"></script>
-    <script src="/web/blog/assets/blog.js"></script>
-  </body>
-</html>
+  <section class="d-none" data-detail-section>
+    <a class="btn btn-outline-secondary btn-sm mb-3" href="/web/blog/publicblogs" data-back-to-list hidden>Back to public posts</a>
+    <article class="blog-article card" data-article>
+      <div class="card-body">
+        <h1 class="card-title" data-article-title></h1>
+        <div class="article-body" data-article-body></div>
+      </div>
+    </article>
+  </section>
+</main>

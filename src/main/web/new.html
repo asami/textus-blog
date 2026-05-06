@@ -1,118 +1,86 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>New Post - Blog</title>
-    <link rel="stylesheet" href="/web/assets/bootstrap.min.css">
-    <link rel="stylesheet" href="/web/assets/textus-widgets.css">
-    <link rel="stylesheet" href="/web/blog/assets/blog.css">
-  </head>
-  <body data-page="edit">
-    <header class="navbar navbar-expand-lg bg-white border-bottom sticky-top">
-      <div class="container-fluid">
-      <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
-      <nav class="d-flex align-items-center gap-3">
-        <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
-        <a class="nav-link" href="/web/blog/userblogs">My posts</a>
-        <form action="/web/blog/logout" method="post" data-logout-form hidden>
-          <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
-        </form>
-        <span class="text-secondary small" data-session-name></span>
-      </nav>
+<main class="edit-shell container py-4">
+  <section class="page-head d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
+    <div>
+      <h1 data-editor-heading>New post</h1>
+      <p>Compose the post body.</p>
+    </div>
+    <div class="page-actions">
+      <a class="btn btn-outline-secondary" href="/web/blog/userblogs">Back to my posts</a>
+    </div>
+  </section>
+
+  <form class="editor-form editor-page-form d-flex flex-column gap-3" action="/form/blog-component/blog/save-editor-post" method="post" data-editor-form>
+    <input type="hidden" name="textus.form.page" value="new">
+    <input type="hidden" name="id" data-editor-id>
+    <section class="card">
+      <div class="card-body d-flex flex-column gap-3">
+        <h2 class="h5 card-title">Post metadata</h2>
+        <label>
+          Title
+          <input class="form-control" name="title" data-editor-title required>
+        </label>
+        <label>
+          URL slug
+          <input class="form-control" name="slug" data-editor-slug placeholder="auto from title">
+          <span class="form-text">Optional. Use a stable, unique URL name for SEO; leave blank to generate one from the title.</span>
+        </label>
+        <label>
+          Description
+          <input class="form-control" name="description" data-editor-description>
+        </label>
       </div>
-    </header>
+    </section>
+    <section class="card">
+      <div class="card-body d-flex flex-column gap-3">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <h2 class="h5 card-title mb-0">Content</h2>
+          <button class="btn btn-outline-primary btn-sm" type="button" data-open-image-picker>Images</button>
+        </div>
+        <label>
+          Content format
+          <select class="form-select" name="contentMarkup" data-editor-markup>
+            <option value="html-fragment" selected>HTML</option>
+            <option value="markdown-gfm">Markdown</option>
+            <option value="smartdox">SmartDox</option>
+          </select>
+        </label>
+        <label>
+          Body
+          <textarea class="form-control" name="content" data-editor-content required></textarea>
+        </label>
+      </div>
+    </section>
+    <section class="card">
+      <div class="card-body d-flex flex-column gap-3">
+        <h2 class="h5 card-title">Tags and publishing</h2>
+        <label>
+          Tags
+          <textarea class="form-control tag-input" name="tags" data-editor-tags data-tag-input placeholder="topic, topic.subtopic"></textarea>
+          <span class="form-text">Comma or newline separated tag paths. Missing Blog tags are created when the post is saved.</span>
+        </label>
+        <div class="tag-suggestions" data-tag-suggestions aria-live="polite"></div>
+        <label class="checkbox-line">
+          <input type="checkbox" name="publish" data-editor-publish>
+          Publish
+        </label>
+      </div>
+    </section>
+    <div class="editor-actions">
+      <button class="btn btn-primary" type="submit">Save</button>
+    </div>
+  </form>
+</main>
 
-    <main class="edit-shell container py-4">
-      <section class="page-head d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
-        <div>
-          <h1 data-editor-heading>New post</h1>
-          <p>Compose the post body.</p>
-        </div>
-        <div class="page-actions">
-          <a class="btn btn-outline-secondary" href="/web/blog/userblogs">Back to my posts</a>
-        </div>
-      </section>
-
-      <form class="editor-form editor-page-form d-flex flex-column gap-3" action="/form/blog-component/blog/save-editor-post" method="post" data-editor-form>
-        <input type="hidden" name="textus.form.page" value="new">
-        <input type="hidden" name="id" data-editor-id>
-        <section class="card">
-          <div class="card-body d-flex flex-column gap-3">
-            <h2 class="h5 card-title">Post metadata</h2>
-            <label>
-              Title
-              <input class="form-control" name="title" data-editor-title required>
-            </label>
-            <label>
-              URL slug
-              <input class="form-control" name="slug" data-editor-slug placeholder="auto from title">
-              <span class="form-text">Optional. Use a stable, unique URL name for SEO; leave blank to generate one from the title.</span>
-            </label>
-            <label>
-              Description
-              <input class="form-control" name="description" data-editor-description>
-            </label>
-          </div>
-        </section>
-        <section class="card">
-          <div class="card-body d-flex flex-column gap-3">
-            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
-              <h2 class="h5 card-title mb-0">Content</h2>
-              <button class="btn btn-outline-primary btn-sm" type="button" data-open-image-picker>Images</button>
-            </div>
-            <label>
-              Content format
-              <select class="form-select" name="contentMarkup" data-editor-markup>
-                <option value="html-fragment" selected>HTML</option>
-                <option value="markdown-gfm">Markdown</option>
-                <option value="smartdox">SmartDox</option>
-              </select>
-            </label>
-            <label>
-              Body
-              <textarea class="form-control" name="content" data-editor-content required></textarea>
-            </label>
-          </div>
-        </section>
-        <section class="card">
-          <div class="card-body d-flex flex-column gap-3">
-            <h2 class="h5 card-title">Tags and publishing</h2>
-            <label>
-              Tags
-              <textarea class="form-control tag-input" name="tags" data-editor-tags data-tag-input placeholder="topic, topic.subtopic"></textarea>
-              <span class="form-text">Comma or newline separated tag paths. Missing Blog tags are created when the post is saved.</span>
-            </label>
-            <div class="tag-suggestions" data-tag-suggestions aria-live="polite"></div>
-            <label class="checkbox-line">
-              <input type="checkbox" name="publish" data-editor-publish>
-              Publish
-            </label>
-          </div>
-        </section>
-        <div class="editor-actions">
-          <button class="btn btn-primary" type="submit">Save</button>
-        </div>
-      </form>
-    </main>
-
-    <div class="modal fade" tabindex="-1" aria-labelledby="blogImageModalTitle" aria-hidden="true" data-image-dialog>
-      <div class="modal-dialog modal-lg modal-dialog-scrollable">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h2 class="modal-title h5" id="blogImageModalTitle">Images</h2>
-            <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body">
-            <div class="image-grid row g-3" data-image-grid></div>
-          </div>
-        </div>
+<div class="modal fade" tabindex="-1" aria-labelledby="blogImageModalTitle" aria-hidden="true" data-image-dialog>
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5" id="blogImageModalTitle">Images</h2>
+        <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="image-grid row g-3" data-image-grid></div>
       </div>
     </div>
-
-    <div class="toast" data-toast hidden></div>
-    <script src="/web/assets/bootstrap.bundle.min.js"></script>
-    <script src="/web/assets/textus-widgets.js"></script>
-    <script src="/web/blog/assets/blog.js"></script>
-  </body>
-</html>
+  </div>
+</div>

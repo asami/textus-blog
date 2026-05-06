@@ -73,7 +73,9 @@ Article extraction order:
 
 The surrounding site layout remains outside `BlogPost.content`. CSS,
 JavaScript, header, footer, and page shell are supplied by the Blog site or by
-the external Web application that embeds the fragment.
+the external Web application that embeds the fragment. The built-in Blog Web
+app keeps this shell in Static Form `WEB-INF/layouts` and `WEB-INF/partials`;
+individual Blog templates contain only page-specific fragments.
 
 ## Image Handling
 
