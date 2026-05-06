@@ -27,7 +27,7 @@
       <section class="page-head d-flex flex-wrap align-items-end justify-content-between gap-3 mb-4">
         <div>
           <h1 data-editor-heading>New post</h1>
-          <p>Write HTML fragment content for the BlogPost body.</p>
+          <p>Compose the post body.</p>
         </div>
         <div class="page-actions">
           <a class="btn btn-outline-secondary" href="/web/blog/userblogs">Back to my posts</a>
@@ -36,60 +36,83 @@
 
       <form class="editor-form editor-page-form d-flex flex-column gap-3" action="/form/blog-component/blog/save-editor-post" method="post" data-editor-form>
         <input type="hidden" name="textus.form.page" value="update">
-        <label>
-          Post id
-          <input class="form-control" name="id" data-editor-id required>
-          <span class="form-text">Without JavaScript, open a post from My posts and use the edit form on that result page.</span>
-        </label>
-        <label>
-          Title
-          <input class="form-control" name="title" data-editor-title required>
-        </label>
-        <label>
-          URL slug
-          <input class="form-control" name="slug" data-editor-slug placeholder="keep current slug">
-          <span class="form-text">Optional. Keep unchanged when blank; if changed, the server makes it unique.</span>
-        </label>
-        <label>
-          Content format
-          <select class="form-select" name="contentMarkup" data-editor-markup>
-            <option value="html-fragment" selected>HTML</option>
-            <option value="markdown-gfm">Markdown</option>
-            <option value="smartdox">SmartDox</option>
-          </select>
-        </label>
-        <label>
-          Content
-          <textarea class="form-control" name="content" data-editor-content required></textarea>
-        </label>
-        <label>
-          Description
-          <input class="form-control" name="description" data-editor-description>
-        </label>
-        <label>
-          Tags
-          <textarea class="form-control tag-input" name="tags" data-editor-tags data-tag-input placeholder="topic, topic.subtopic"></textarea>
-          <span class="form-text">Comma or newline separated tag paths. Missing Blog tags are created when the post is saved.</span>
-        </label>
-        <div class="tag-suggestions" data-tag-suggestions aria-live="polite"></div>
-        <label class="checkbox-line">
-          <input type="checkbox" name="publish" data-editor-publish>
-          Publish
-        </label>
+        <section class="card">
+          <div class="card-body d-flex flex-column gap-3">
+            <h2 class="h5 card-title">Post metadata</h2>
+            <label>
+              Post id
+              <input class="form-control" name="id" data-editor-id required>
+              <span class="form-text">Without JavaScript, open a post from My posts and use the edit form on that result page.</span>
+            </label>
+            <label>
+              Title
+              <input class="form-control" name="title" data-editor-title required>
+            </label>
+            <label>
+              URL slug
+              <input class="form-control" name="slug" data-editor-slug placeholder="keep current slug">
+              <span class="form-text">Optional. Keep unchanged when blank; if changed, the server makes it unique.</span>
+            </label>
+            <label>
+              Description
+              <input class="form-control" name="description" data-editor-description>
+            </label>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-body d-flex flex-column gap-3">
+            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+              <h2 class="h5 card-title mb-0">Content</h2>
+              <button class="btn btn-outline-primary btn-sm" type="button" data-open-image-picker>Images</button>
+            </div>
+            <label>
+              Content format
+              <select class="form-select" name="contentMarkup" data-editor-markup>
+                <option value="html-fragment" selected>HTML</option>
+                <option value="markdown-gfm">Markdown</option>
+                <option value="smartdox">SmartDox</option>
+              </select>
+            </label>
+            <label>
+              Body
+              <textarea class="form-control" name="content" data-editor-content required></textarea>
+            </label>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-body d-flex flex-column gap-3">
+            <h2 class="h5 card-title">Tags and publishing</h2>
+            <label>
+              Tags
+              <textarea class="form-control tag-input" name="tags" data-editor-tags data-tag-input placeholder="topic, topic.subtopic"></textarea>
+              <span class="form-text">Comma or newline separated tag paths. Missing Blog tags are created when the post is saved.</span>
+            </label>
+            <div class="tag-suggestions" data-tag-suggestions aria-live="polite"></div>
+            <label class="checkbox-line">
+              <input type="checkbox" name="publish" data-editor-publish>
+              Publish
+            </label>
+          </div>
+        </section>
         <div class="editor-actions">
-          <button class="btn btn-outline-primary" type="button" data-open-image-picker>Images</button>
           <button class="btn btn-primary" type="submit">Save</button>
         </div>
       </form>
     </main>
 
-    <dialog class="image-dialog" data-image-dialog>
-      <form method="dialog" class="dialog-head">
-        <strong>Images</strong>
-        <button class="btn btn-sm btn-outline-secondary" type="submit">Close</button>
-      </form>
-      <div class="image-grid row g-3" data-image-grid></div>
-    </dialog>
+    <div class="modal fade" tabindex="-1" aria-labelledby="blogImageModalTitle" aria-hidden="true" data-image-dialog>
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 class="modal-title h5" id="blogImageModalTitle">Images</h2>
+            <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="image-grid row g-3" data-image-grid></div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="toast" data-toast hidden></div>
     <script src="/web/assets/bootstrap.bundle.min.js"></script>

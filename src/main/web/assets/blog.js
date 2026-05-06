@@ -120,7 +120,7 @@ function bindDashboardEvents() {
     await loadMyPosts(form.get("text") || "", form.get("tag") || "");
   });
   document.querySelector("[data-open-upload-dialog]")?.addEventListener("click", () => {
-    els.uploadDialog?.showModal();
+    showModalElement(els.uploadDialog);
   });
   els.uploadForm?.addEventListener("submit", importPostTree);
 }
@@ -330,7 +330,7 @@ async function importPostTree(event) {
     await postForm(paths.importTree, form);
     notice("Imported.");
     els.uploadForm.reset();
-    els.uploadDialog?.close();
+    hideModalElement(els.uploadDialog);
     await loadMyPosts("");
   } catch (error) {
     notice(error.message, true);
@@ -343,7 +343,7 @@ async function openImagePicker() {
     form.append("limit", "100");
     const result = await postForm(paths.images, form);
     renderImages(result.data || []);
-    els.imageDialog?.showModal();
+    showModalElement(els.imageDialog);
   } catch (error) {
     notice(error.message, true);
   }
@@ -368,7 +368,7 @@ function renderImages(images) {
     button.querySelector(".image-id").textContent = readId(image);
     button.addEventListener("click", () => {
       insertAtCursor(els.editorContent, imageReferenceSnippet(readId(image)));
-      els.imageDialog.close();
+      hideModalElement(els.imageDialog);
     });
     column.append(button);
     els.imageGrid.append(column);
@@ -641,6 +641,30 @@ function tagPath(tag) {
   if (!tag) return "";
   if (typeof tag === "string") return tag;
   return String(tag.path || tag.key || tag.name || tag.value || "").trim();
+}
+
+function showModalElement(element) {
+  if (!element) return;
+  const modal = window.bootstrap?.Modal?.getOrCreateInstance(element);
+  if (modal) {
+    modal.show();
+  } else if (typeof element.showModal === "function") {
+    element.showModal();
+  } else {
+    element.hidden = false;
+  }
+}
+
+function hideModalElement(element) {
+  if (!element) return;
+  const modal = window.bootstrap?.Modal?.getInstance(element);
+  if (modal) {
+    modal.hide();
+  } else if (typeof element.close === "function") {
+    element.close();
+  } else {
+    element.hidden = true;
+  }
 }
 
 function readId(record) {

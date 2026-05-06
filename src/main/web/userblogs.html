@@ -14,6 +14,7 @@
       <a class="navbar-brand fw-semibold" href="/web/blog">Blog</a>
       <nav class="d-flex align-items-center gap-3">
         <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
+        <a class="nav-link" href="/web/blog/jobs">My jobs</a>
         <form action="/web/blog/logout" method="post" data-logout-form hidden>
           <button class="btn btn-sm btn-outline-secondary" type="submit">Log out</button>
         </form>
@@ -34,20 +35,26 @@
         </div>
       </section>
 
-      <form class="search-form dashboard-search row g-2 align-items-center mb-4" action="/form/blog-component/blog/search-my-posts" method="post" data-search-form>
-        <input type="hidden" name="textus.form.page" value="userblogs">
-        <input type="hidden" name="limit" value="100">
-        <input type="hidden" name="includeDescendants" value="true">
-        <div class="col-12 col-md">
-          <input class="form-control" type="search" name="text" placeholder="Search my posts" autocomplete="off">
+      <div class="card mb-3">
+        <div class="card-body">
+          <form class="search-form dashboard-search row g-2 align-items-end" action="/form/blog-component/blog/search-my-posts" method="post" data-search-form>
+            <input type="hidden" name="textus.form.page" value="userblogs">
+            <input type="hidden" name="limit" value="100">
+            <input type="hidden" name="includeDescendants" value="true">
+            <div class="col-12 col-md">
+              <label class="form-label" for="my-blog-search-text">Search</label>
+              <input class="form-control" id="my-blog-search-text" type="search" name="text" placeholder="Search my posts" autocomplete="off">
+            </div>
+            <div class="col-12 col-md-4 col-xl-3">
+              <label class="form-label" for="my-blog-search-tag">Tag</label>
+              <input class="form-control" id="my-blog-search-tag" type="search" name="tag" placeholder="Tag path" autocomplete="off">
+            </div>
+            <div class="col-12 col-md-auto d-grid">
+              <button class="btn btn-primary w-100" type="submit">Search</button>
+            </div>
+          </form>
         </div>
-        <div class="col-12 col-md-4 col-xl-3">
-          <input class="form-control" type="search" name="tag" placeholder="Tag path" autocomplete="off">
-        </div>
-        <div class="col-12 col-md-auto d-grid">
-          <button class="btn btn-primary w-100" type="submit">Search</button>
-        </div>
-      </form>
+      </div>
 
       <div class="post-list dashboard-list row g-3" data-my-post-list>
         <noscript>
@@ -56,27 +63,34 @@
       </div>
     </main>
 
-    <dialog class="image-dialog" data-upload-dialog>
-      <form method="dialog" class="dialog-head">
-        <strong>Upload post</strong>
-          <button class="btn btn-sm btn-outline-secondary" type="submit">Close</button>
-      </form>
-      <form class="upload-form d-flex flex-column gap-3" action="/form/blog-component/blog/import-post-tree" method="post" enctype="multipart/form-data" data-upload-form>
-        <input type="hidden" name="textus.form.page" value="userblogs">
-        <label>
-          Blog file bundle
-          <input class="form-control" type="file" name="fileBundle" required>
-          <span class="form-text">Choose a ZIP archive or a single article file. Directory upload is supported by CNCF clients and command execution.</span>
-        </label>
-        <label class="checkbox-line">
-          <input type="checkbox" name="publish">
-          Publish
-        </label>
-        <div class="editor-actions">
-          <button class="btn btn-primary" type="submit">Import</button>
+    <div class="modal fade" tabindex="-1" aria-labelledby="blogUploadModalTitle" aria-hidden="true" data-upload-dialog>
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2 class="modal-title h5" id="blogUploadModalTitle">Upload post</h2>
+            <button class="btn-close" type="button" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <form class="upload-form" action="/form/blog-component/blog/import-post-tree" method="post" enctype="multipart/form-data" data-upload-form>
+            <div class="modal-body d-flex flex-column gap-3">
+              <input type="hidden" name="textus.form.page" value="userblogs">
+              <label>
+                Blog file bundle
+                <input class="form-control" type="file" name="fileBundle" required>
+                <span class="form-text">Choose a ZIP archive or a single article file. Directory upload is supported by CNCF clients and command execution.</span>
+              </label>
+              <label class="checkbox-line">
+                <input type="checkbox" name="publish">
+                Publish
+              </label>
+            </div>
+            <div class="modal-footer">
+              <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">Cancel</button>
+              <button class="btn btn-primary" type="submit">Import</button>
+            </div>
+          </form>
         </div>
-      </form>
-    </dialog>
+      </div>
+    </div>
 
     <div class="toast" data-toast hidden></div>
     <script src="/web/assets/bootstrap.bundle.min.js"></script>

@@ -26,8 +26,7 @@ a {
   text-decoration: none;
 }
 
-.editor-actions,
-.dialog-head {
+.editor-actions {
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -276,15 +275,8 @@ label > :not(:first-child) {
   flex-wrap: wrap;
 }
 
-.image-dialog {
-  width: min(860px, calc(100vw - 2rem));
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 1rem;
-}
-
 .image-grid {
-  margin-top: 1rem;
+  margin-top: 0;
 }
 
 .image-card {
