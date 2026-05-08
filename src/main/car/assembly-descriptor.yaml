@@ -5,6 +5,8 @@ components:
     version: 0.0.1-SNAPSHOT
   - name: textus-user-account
     version: 0.1.1-SNAPSHOT
+  - name: textus-user-notification
+    version: 0.1.1-SNAPSHOT
 security:
   authentication:
     convention: enabled
@@ -16,3 +18,33 @@ security:
         enabled: true
         priority: 100
         default: true
+runtime:
+  userNotification:
+    providers:
+      - name: textus-user-notification
+        component: textus-user-notification
+        channel: in-app
+        enabled: true
+        priority: 100
+        default: true
+    eventForwarding:
+      - event: job.succeeded
+        provider: textus-user-notification
+        channel: in-app
+        appVisibleOnly: true
+        asyncOnly: true
+      - event: job.failed
+        provider: textus-user-notification
+        channel: in-app
+        appVisibleOnly: true
+        asyncOnly: true
+      - event: job.cancelled
+        provider: textus-user-notification
+        channel: in-app
+        appVisibleOnly: true
+        asyncOnly: true
+      - event: job.recovery-required
+        provider: textus-user-notification
+        channel: in-app
+        appVisibleOnly: true
+        asyncOnly: true

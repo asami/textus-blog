@@ -1,4 +1,8 @@
 defaultView: summary
+shell:
+  component: blog-component
+  app: blog
+  layout: default
 apps:
   - name: blog
     kind: static-form

@@ -4,6 +4,10 @@
     <nav class="d-flex align-items-center gap-3">
       <a class="nav-link" href="/web/blog/publicblogs">Public blog</a>
       <a class="nav-link" href="/web/blog/userblogs" data-my-posts-link hidden>My posts</a>
+      <a class="nav-link d-inline-flex align-items-center gap-1" href="/web/notifications" data-notification-indicator hidden>
+        Notifications
+        <span class="badge rounded-pill text-bg-danger" data-notification-badge hidden>0</span>
+      </a>
       <a class="nav-link" href="/web/textus-user-account/signin?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-login-link>Log in</a>
       <a class="btn btn-sm btn-outline-primary" href="/web/textus-user-account/signup?returnTo=%2Fweb%2Fblog%2Fuserblogs" data-signup-link>Create account</a>
       <form action="/web/blog/logout" method="post" data-logout-form hidden>

@@ -27,7 +27,7 @@ import org.simplemodeling.textus.blog.entity.BlogPost
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  7, 2026
+ * @version May.  8, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactorySpec extends AnyWordSpec with Matchers {
@@ -688,6 +688,9 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
 
       val webYaml = java.nio.file.Files.readString(root.resolve("src/main/car/web/web.yaml"))
       webYaml should include ("/web/blog")
+      webYaml should include ("shell:")
+      webYaml should include ("component: blog-component")
+      webYaml should include ("app: blog")
       webYaml should include ("layout: default")
       webYaml should include ("composition: article")
       webYaml should include ("pages:")
@@ -707,6 +710,19 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       webYaml should not include "blog-edit"
       webYaml should include ("blog-component.blog.search-my-posts: protected")
       webYaml should include ("blog-component.blog.get-my-post: protected")
+      val assemblyYaml = java.nio.file.Files.readString(root.resolve("src/main/car/assembly-descriptor.yaml"))
+      assemblyYaml should include ("name: textus-user-notification")
+      assemblyYaml should include ("runtime:")
+      assemblyYaml should include ("userNotification:")
+      assemblyYaml should include ("providers:")
+      assemblyYaml should include ("component: textus-user-notification")
+      assemblyYaml should include ("eventForwarding:")
+      assemblyYaml should include ("event: job.succeeded")
+      assemblyYaml should include ("event: job.failed")
+      assemblyYaml should include ("event: job.cancelled")
+      assemblyYaml should include ("event: job.recovery-required")
+      assemblyYaml should include ("appVisibleOnly: true")
+      assemblyYaml should include ("asyncOnly: true")
 
       val publicHtml = java.nio.file.Files.readString(root.resolve("src/main/web/publicblogs.html"))
       publicHtml should not include ("<!doctype html")
@@ -745,6 +761,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       publicNavigation should include ("data-login-link")
       publicNavigation should include ("data-signup-link")
       publicNavigation should include ("data-logout-form")
+      publicNavigation should include ("data-notification-indicator")
+      publicNavigation should include ("data-notification-badge")
+      publicNavigation should include ("href=\"/web/notifications\"")
+      publicNavigation should include ("badge rounded-pill text-bg-danger")
       val feedFooter = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/feed-footer.html"))
       feedFooter should include ("/rest/v1/blog/blog/atomFeed")
       val headPartial = java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/head.html"))
@@ -783,6 +803,10 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       myHtml should include ("data-upload-form")
       myHtml should include ("/web/blog/new")
       java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/navigation-user.html")) should include ("<a class=\"nav-link\" href=\"/web/blog/jobs\">My jobs</a>")
+      java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/navigation-user.html")) should include ("data-notification-badge")
+      java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/navigation-user.html")) should include ("href=\"/web/notifications\"")
+      java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/navigation-edit.html")) should include ("data-notification-badge")
+      java.nio.file.Files.readString(root.resolve("src/main/web/WEB-INF/partials/navigation-edit.html")) should include ("href=\"/web/notifications\"")
       myHtml should not include ("btn btn-outline-secondary\" href=\"/web/blog/jobs\"")
       myHtml should include ("/form/blog-component/blog/search-my-posts")
       myHtml should include ("card mb-3")
@@ -838,6 +862,24 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       val blogJs = java.nio.file.Files.readString(root.resolve("src/main/web/assets/blog.js"))
       blogJs should not include ("addEventListener(\"submit\", saveEditorPost)")
       blogJs should not include "paths.save"
+      blogJs should include ("notificationSummary: \"/form-api/textus-user-notification/notification/get-notification-summary\"")
+      blogJs should include ("debugKind: \"background\"")
+      blogJs should include ("debugLabel: \"Notification badge summary\"")
+      blogJs should include ("debugLabel: \"Blog tag suggestions\"")
+      blogJs should include ("debugKind: \"page-render\"")
+      blogJs should include ("debugDisplay: \"always\"")
+      blogJs should include ("debugLabel: \"My posts list\"")
+      blogJs should include ("debugLabel: \"Public post list\"")
+      blogJs should include ("headers[\"x-textus-debug-request-kind\"]")
+      blogJs should include ("headers[\"x-textus-debug-label\"]")
+      blogJs should include ("headers[\"x-textus-debug-optional\"]")
+      blogJs should include ("headers[\"x-textus-debug-display\"]")
+      blogJs should include ("data-notification-indicator")
+      blogJs should include ("data-notification-badge")
+      blogJs should include ("await loadNotificationSummary()")
+      blogJs should include ("if (!requireAuth()) return;\n    await loadTags();")
+      blogJs should include ("function renderNotificationBadge")
+      blogJs should include ("badge.hidden = !authenticated || value === 0")
       blogJs should include ("normalizeTagInputs")
       blogJs should include ("normalizedTagValues")
       blogJs should include ("renderTagSuggestions")

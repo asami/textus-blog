@@ -8,6 +8,7 @@ const paths = {
   importTree: "/form-api/blog-component/blog/import-post-tree",
   images: "/form-api/blog-component/blog/list-image-blobs",
   tags: "/form-api/blog-component/blog/list-tags",
+  notificationSummary: "/form-api/textus-user-notification/notification/get-notification-summary",
   jobs: "/rest/v1/job_control/job/await_job_result"
 };
 
@@ -24,6 +25,8 @@ const els = {
   login: document.querySelector("[data-login-link]"),
   signup: document.querySelector("[data-signup-link]"),
   myPosts: document.querySelectorAll("[data-my-posts-link]"),
+  notificationIndicators: document.querySelectorAll("[data-notification-indicator]"),
+  notificationBadges: document.querySelectorAll("[data-notification-badge]"),
   logout: document.querySelector("[data-logout-form]"),
   sessionName: document.querySelector("[data-session-name]"),
   searchForm: document.querySelector("[data-search-form]"),
@@ -62,18 +65,20 @@ document.addEventListener("DOMContentLoaded", boot);
 async function boot() {
   bindCommonEvents();
   await loadSession();
-  await loadTags();
   initializeEditorMarkupControls();
   if (state.page === "my") {
     if (!requireAuth()) return;
+    await loadTags();
     bindDashboardEvents();
     const params = new URLSearchParams(location.search);
     await loadMyPosts(params.get("text") || "", params.get("tag") || "");
   } else if (state.page === "edit") {
     if (!requireAuth()) return;
+    await loadTags();
     bindEditorEvents();
     await loadEditorPost();
   } else if (state.page === "reader") {
+    await loadTags();
     bindReaderEvents();
     const params = new URLSearchParams(location.search);
     await loadPublicPosts(params.get("text") || "", state.activeTag);
@@ -142,11 +147,47 @@ async function loadSession() {
   for (const link of els.myPosts || []) link.hidden = !authenticated;
   if (els.logout) els.logout.hidden = !authenticated;
   if (els.sessionName) els.sessionName.textContent = authenticated ? displayUser() : "";
+  if (authenticated) {
+    await loadNotificationSummary();
+  } else {
+    renderNotificationBadge(0, false);
+  }
+}
+
+async function loadNotificationSummary() {
+  try {
+    const result = await postForm(paths.notificationSummary, new FormData(), {
+      debugKind: "background",
+      debugLabel: "Notification badge summary",
+      debugOptional: true,
+      debugDisplay: "always"
+    });
+    const count = Number(result.unconfirmedCount || 0);
+    renderNotificationBadge(Number.isFinite(count) ? count : 0, true);
+  } catch {
+    renderNotificationBadge(0, false);
+  }
+}
+
+function renderNotificationBadge(count, authenticated) {
+  for (const indicator of els.notificationIndicators || []) {
+    indicator.hidden = !authenticated;
+  }
+  for (const badge of els.notificationBadges || []) {
+    const value = Math.max(0, count || 0);
+    badge.textContent = String(value);
+    badge.hidden = !authenticated || value === 0;
+  }
 }
 
 async function loadTags() {
   try {
-    const result = await postForm(paths.tags, new FormData());
+    const result = await postForm(paths.tags, new FormData(), {
+      debugKind: "background",
+      debugLabel: "Blog tag suggestions",
+      debugOptional: true,
+      debugDisplay: "always"
+    });
     state.tags = (result.data || result.body || [])
       .filter(tag => tagPath(tag))
       .sort((a, b) => tagPath(a).localeCompare(tagPath(b)));
@@ -172,7 +213,11 @@ async function loadPublicPosts(text, tag = "") {
     form.append("includeDescendants", "true");
   }
   form.append("limit", "50");
-  const result = await postForm(paths.search, form);
+  const result = await postForm(paths.search, form, {
+    debugKind: "page-render",
+    debugLabel: "Public post list",
+    debugDisplay: "always"
+  });
   state.posts = result.data || [];
   state.activeTag = tag || "";
   state.currentPost = null;
@@ -189,7 +234,11 @@ async function loadMyPosts(text, tag = "") {
     form.append("includeDescendants", "true");
   }
   form.append("limit", "100");
-  const result = await postForm(paths.searchMy, form);
+  const result = await postForm(paths.searchMy, form, {
+    debugKind: "page-render",
+    debugLabel: "My posts list",
+    debugDisplay: "always"
+  });
   state.posts = result.data || [];
   renderMyPostList();
 }
@@ -256,7 +305,11 @@ async function openPublicPost(id) {
   if (!id) return;
   const form = new FormData();
   form.append("id", id);
-  const post = await postForm(paths.get, form);
+  const post = await postForm(paths.get, form, {
+    debugKind: "page-render",
+    debugLabel: "Public post detail",
+    debugDisplay: "always"
+  });
   state.currentPost = post;
   showPublicDetail();
   window.scrollTo(0, 0);
@@ -303,7 +356,11 @@ async function loadEditorPost() {
   }
   const form = new FormData();
   form.append("id", id);
-  const post = await postForm(paths.getMy, form);
+  const post = await postForm(paths.getMy, form, {
+    debugKind: "page-render",
+    debugLabel: "Editor post load",
+    debugDisplay: "always"
+  });
   state.currentPost = post;
   setEditor(post);
 }
@@ -375,9 +432,13 @@ function renderImages(images) {
   }
 }
 
-async function postForm(url, form) {
+async function postForm(url, form, options = {}) {
   const headers = {};
   if (state.session?.sessionId) headers["x-textus-session"] = state.session.sessionId;
+  if (options.debugKind) headers["x-textus-debug-request-kind"] = options.debugKind;
+  if (options.debugLabel) headers["x-textus-debug-label"] = options.debugLabel;
+  if (options.debugOptional !== undefined) headers["x-textus-debug-optional"] = String(Boolean(options.debugOptional));
+  if (options.debugDisplay) headers["x-textus-debug-display"] = options.debugDisplay;
   let response = await fetch(url, {
     method: "POST",
     credentials: "same-origin",
