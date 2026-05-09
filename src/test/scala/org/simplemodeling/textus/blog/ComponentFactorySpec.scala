@@ -27,7 +27,7 @@ import org.simplemodeling.textus.blog.entity.BlogPost
 /*
  * @since   Apr. 29, 2026
  *  version Apr. 30, 2026
- * @version May.  8, 2026
+ * @version May. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final class ComponentFactorySpec extends AnyWordSpec with Matchers {
@@ -892,7 +892,11 @@ final class ComponentFactorySpec extends AnyWordSpec with Matchers {
       blogJs should include ("headers[\"x-textus-debug-display\"]")
       blogJs should include ("data-notification-indicator")
       blogJs should include ("data-notification-badge")
-      blogJs should include ("await loadNotificationSummary()")
+      blogJs should include ("loadNotificationSummary();")
+      blogJs should include ("function textusSessionCookie")
+      blogJs should include ("headers[\"x-textus-session\"] = sessionId")
+      blogJs should include ("textus-session-blog")
+      blogJs should include ("key.startsWith(\"textus-session-\")")
       blogJs should include ("if (!requireAuth()) return;\n    await loadTags();")
       blogJs should include ("function renderNotificationBadge")
       blogJs should include ("badge.hidden = !authenticated || value === 0")

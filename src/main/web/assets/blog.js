@@ -136,7 +136,10 @@ function bindEditorEvents() {
 
 async function loadSession() {
   try {
-    const response = await fetch(paths.session, { credentials: "same-origin" });
+    const headers = {};
+    const sessionId = textusSessionCookie();
+    if (sessionId) headers["x-textus-session"] = sessionId;
+    const response = await fetch(paths.session, { credentials: "same-origin", headers });
     state.session = response.ok ? await response.json() : { authenticated: false };
   } catch {
     state.session = { authenticated: false };
@@ -147,11 +150,38 @@ async function loadSession() {
   for (const link of els.myPosts || []) link.hidden = !authenticated;
   if (els.logout) els.logout.hidden = !authenticated;
   if (els.sessionName) els.sessionName.textContent = authenticated ? displayUser() : "";
-  if (authenticated) {
-    await loadNotificationSummary();
+  if (authenticated && els.notificationIndicators.length > 0) {
+    loadNotificationSummary();
   } else {
     renderNotificationBadge(0, false);
   }
+}
+
+function textusSessionCookie() {
+  const cookies = document.cookie
+    .split(";")
+    .map(part => part.trim())
+    .filter(Boolean)
+    .map(part => {
+      const index = part.indexOf("=");
+      return index >= 0 ? [part.slice(0, index), part.slice(index + 1)] : [part, ""];
+    });
+  const names = preferredSessionCookieNames();
+  for (const name of names) {
+    const match = cookies.find(([key]) => key === name);
+    if (match && match[1]) return decodeURIComponent(match[1]);
+  }
+  const fallback = cookies.find(([key, value]) => key.startsWith("textus-session-") && value);
+  return fallback ? decodeURIComponent(fallback[1]) : "";
+}
+
+function preferredSessionCookieNames() {
+  const names = ["textus-session-blog"];
+  const match = location.pathname.match(/^\/web\/([^/?#]+)/);
+  if (match && match[1]) {
+    names.push("textus-session-" + match[1].toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, ""));
+  }
+  return Array.from(new Set(names.filter(Boolean)));
 }
 
 async function loadNotificationSummary() {
@@ -160,7 +190,8 @@ async function loadNotificationSummary() {
       debugKind: "background",
       debugLabel: "Notification badge summary",
       debugOptional: true,
-      debugDisplay: "always"
+      debugDisplay: "always",
+      timeoutMs: 3000
     });
     const count = Number(result.unconfirmedCount || 0);
     renderNotificationBadge(Number.isFinite(count) ? count : 0, true);
@@ -186,7 +217,8 @@ async function loadTags() {
       debugKind: "background",
       debugLabel: "Blog tag suggestions",
       debugOptional: true,
-      debugDisplay: "always"
+      debugDisplay: "always",
+      timeoutMs: 3000
     });
     state.tags = (result.data || result.body || [])
       .filter(tag => tagPath(tag))
@@ -439,17 +471,27 @@ async function postForm(url, form, options = {}) {
   if (options.debugLabel) headers["x-textus-debug-label"] = options.debugLabel;
   if (options.debugOptional !== undefined) headers["x-textus-debug-optional"] = String(Boolean(options.debugOptional));
   if (options.debugDisplay) headers["x-textus-debug-display"] = options.debugDisplay;
+  const controller = options.timeoutMs ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), options.timeoutMs)
+    : null;
   let response = await fetch(url, {
     method: "POST",
     credentials: "same-origin",
     headers,
-    body: form
+    body: form,
+    signal: controller ? controller.signal : undefined
   });
-  let text = await response.text();
-  if (response.ok && isJobId(text)) {
-    const awaited = await awaitJobResult(text.trim());
-    response = awaited.response;
-    text = awaited.text;
+  let text;
+  try {
+    text = await response.text();
+    if (response.ok && isJobId(text)) {
+      const awaited = await awaitJobResult(text.trim());
+      response = awaited.response;
+      text = awaited.text;
+    }
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
   const data = parsePayload(text, response.statusText);
   if (!response.ok || data.status === "failure") {
