@@ -27,23 +27,32 @@ user accounts and Blog records across runtime restarts. The first startup after
 adding this setting uses a new persistent database, so register once more; later
 restarts reuse the same local database file.
 
-With this file in place, starting from the `textus-blog` project root can use the
-component development directory directly:
+With this file in place, starting from the `textus-blog` project root uses the
+component development directories directly:
 
 ```bash
 sbt --batch 'runMain org.goldenport.cncf.CncfMain --component-dev-dir . server'
 ```
 
-The runtime treats the configured development directories as component
-repositories by reading the latest CAR from each `target/` directory. Rebuild the
-user-account and user-notification CARs after changing those projects:
+The runtime does not read the dependent component CARs while
+`textus.repository.component.dev.dir` is configured. Each dependency must have
+`target/cncf.d/runtime-classpath.txt` once, then normal development only needs
+`sbt compile` and a Blog server restart for Scala/CML implementation changes:
 
 ```bash
 cd ../textus-user-account
-sbt --batch cozyBuildCAR
+scripts/update-runtime-classpath.sh
+sbt --batch compile
 cd ../textus-user-notification
-sbt --batch cozyBuildCAR
+scripts/update-runtime-classpath.sh
+sbt --batch compile
 ```
+
+Run the `update-runtime-classpath.sh` scripts again only after dependency or
+classpath changes. Web resources are read from each dependency's `src/main/web`,
+so HTML/CSS/JS changes can be checked with a browser reload and no CAR build.
+Use `cozyBuildCAR` for release/package validation, not for the normal edit/run
+loop.
 
 If `textus-user-notification` is not available, the Blog pages still run; the
 header notification badge stays hidden. When the component is present, the badge
