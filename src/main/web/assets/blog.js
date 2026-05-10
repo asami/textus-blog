@@ -1,14 +1,11 @@
 const paths = {
   session: "/web/blog/session",
-  search: "/form-api/blog-component/blog/search-posts",
   get: "/form-api/blog-component/blog/get-post",
-  searchMy: "/form-api/blog-component/blog/search-my-posts",
   getMy: "/form-api/blog-component/blog/get-my-post",
   save: "/form-api/blog-component/blog/save-editor-post",
   importTree: "/form-api/blog-component/blog/import-post-tree",
   images: "/form-api/blog-component/blog/list-image-blobs",
   tags: "/form-api/blog-component/blog/list-tags",
-  notificationSummary: "/form-api/textus-user-notification/notification/get-notification-summary",
   jobs: "/rest/v1/job_control/job/await_job_result"
 };
 
@@ -25,6 +22,9 @@ const els = {
   login: document.querySelector("[data-login-link]"),
   signup: document.querySelector("[data-signup-link]"),
   myPosts: document.querySelectorAll("[data-my-posts-link]"),
+  jobLinks: document.querySelectorAll("[data-jobs-link]"),
+  jobActiveBadges: document.querySelectorAll("[data-job-active-badge]"),
+  jobUnconfirmedBadges: document.querySelectorAll("[data-job-unconfirmed-badge]"),
   notificationIndicators: document.querySelectorAll("[data-notification-indicator]"),
   notificationBadges: document.querySelectorAll("[data-notification-badge]"),
   logout: document.querySelector("[data-logout-form]"),
@@ -64,14 +64,13 @@ document.addEventListener("DOMContentLoaded", boot);
 
 async function boot() {
   bindCommonEvents();
+  markCurrentHeaderAction();
   await loadSession();
   initializeEditorMarkupControls();
   if (state.page === "my") {
     if (!requireAuth()) return;
     await loadTags();
     bindDashboardEvents();
-    const params = new URLSearchParams(location.search);
-    await loadMyPosts(params.get("text") || "", params.get("tag") || "");
   } else if (state.page === "edit") {
     if (!requireAuth()) return;
     await loadTags();
@@ -81,7 +80,6 @@ async function boot() {
     await loadTags();
     bindReaderEvents();
     const params = new URLSearchParams(location.search);
-    await loadPublicPosts(params.get("text") || "", state.activeTag);
     const postId = params.get("post") || location.hash.replace(/^#post=/, "");
     if (postId) {
       await openPublicPost(postId);
@@ -111,19 +109,10 @@ function bindCommonEvents() {
 }
 
 function bindReaderEvents() {
-  els.searchForm?.addEventListener("submit", async event => {
-    event.preventDefault();
-    const form = new FormData(els.searchForm);
-    await loadPublicPosts(form.get("text") || "", form.get("tag") || "");
-  });
+  // Search is server-rendered through the Static Form /form endpoint.
 }
 
 function bindDashboardEvents() {
-  els.searchForm?.addEventListener("submit", async event => {
-    event.preventDefault();
-    const form = new FormData(els.searchForm);
-    await loadMyPosts(form.get("text") || "", form.get("tag") || "");
-  });
   document.querySelector("[data-open-upload-dialog]")?.addEventListener("click", () => {
     showModalElement(els.uploadDialog);
   });
@@ -148,12 +137,27 @@ async function loadSession() {
   if (els.login) els.login.hidden = authenticated;
   if (els.signup) els.signup.hidden = authenticated;
   for (const link of els.myPosts || []) link.hidden = !authenticated;
+  for (const link of els.jobLinks || []) link.hidden = !authenticated;
+  renderJobBadgesFromServer(authenticated);
   if (els.logout) els.logout.hidden = !authenticated;
   if (els.sessionName) els.sessionName.textContent = authenticated ? displayUser() : "";
-  if (authenticated && els.notificationIndicators.length > 0) {
-    loadNotificationSummary();
-  } else {
-    renderNotificationBadge(0, false);
+  renderNotificationBadgeFromServer(authenticated);
+}
+
+function markCurrentHeaderAction() {
+  const path = location.pathname.replace(/\/+$/, "") || "/";
+  setHeaderActionCurrent(els.jobLinks, path === "/web/blog/jobs");
+  setHeaderActionCurrent(els.notificationIndicators, path === "/web/notifications");
+}
+
+function setHeaderActionCurrent(links, active) {
+  for (const link of links || []) {
+    link.classList.toggle("active", active);
+    if (active) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
   }
 }
 
@@ -184,30 +188,27 @@ function preferredSessionCookieNames() {
   return Array.from(new Set(names.filter(Boolean)));
 }
 
-async function loadNotificationSummary() {
-  try {
-    const result = await postForm(paths.notificationSummary, new FormData(), {
-      debugKind: "background",
-      debugLabel: "Notification badge summary",
-      debugOptional: true,
-      debugDisplay: "always",
-      timeoutMs: 3000
-    });
-    const count = Number(result.unconfirmedCount || 0);
-    renderNotificationBadge(Number.isFinite(count) ? count : 0, true);
-  } catch {
-    renderNotificationBadge(0, false);
-  }
-}
-
-function renderNotificationBadge(count, authenticated) {
+function renderNotificationBadgeFromServer(authenticated) {
   for (const indicator of els.notificationIndicators || []) {
     indicator.hidden = !authenticated;
   }
   for (const badge of els.notificationBadges || []) {
-    const value = Math.max(0, count || 0);
+    const value = Math.max(0, Number(badge.textContent || "0") || 0);
     badge.textContent = String(value);
     badge.hidden = !authenticated || value === 0;
+  }
+}
+
+function renderJobBadgesFromServer(authenticated) {
+  renderCountBadges(els.jobActiveBadges, authenticated);
+  renderCountBadges(els.jobUnconfirmedBadges, authenticated);
+}
+
+function renderCountBadges(badges, visible) {
+  for (const badge of badges || []) {
+    const value = Math.max(0, Number(badge.textContent || "0") || 0);
+    badge.textContent = String(value);
+    badge.hidden = !visible || value === 0;
   }
 }
 
@@ -235,44 +236,6 @@ function requireAuth() {
   const returnTo = encodeURIComponent(`${location.pathname}${location.search}`);
   location.href = `/web/textus-user-account/signin?returnTo=${returnTo}`;
   return false;
-}
-
-async function loadPublicPosts(text, tag = "") {
-  const form = new FormData();
-  if (text) form.append("text", text);
-  if (tag) {
-    form.append("tag", tag);
-    form.append("includeDescendants", "true");
-  }
-  form.append("limit", "50");
-  const result = await postForm(paths.search, form, {
-    debugKind: "page-render",
-    debugLabel: "Public post list",
-    debugDisplay: "always"
-  });
-  state.posts = result.data || [];
-  state.activeTag = tag || "";
-  state.currentPost = null;
-  showPublicList();
-  renderActiveTagFilter();
-  renderPublicPostList();
-}
-
-async function loadMyPosts(text, tag = "") {
-  const form = new FormData();
-  if (text) form.append("text", text);
-  if (tag) {
-    form.append("tag", tag);
-    form.append("includeDescendants", "true");
-  }
-  form.append("limit", "100");
-  const result = await postForm(paths.searchMy, form, {
-    debugKind: "page-render",
-    debugLabel: "My posts list",
-    debugDisplay: "always"
-  });
-  state.posts = result.data || [];
-  renderMyPostList();
 }
 
 function renderPublicPostList() {
@@ -420,7 +383,7 @@ async function importPostTree(event) {
     notice("Imported.");
     els.uploadForm.reset();
     hideModalElement(els.uploadDialog);
-    await loadMyPosts("");
+    location.href = "/form/blog-component/blog/search-my-posts/result?textus.form.page=userblogs&limit=100&includeDescendants=true";
   } catch (error) {
     notice(error.message, true);
   }
