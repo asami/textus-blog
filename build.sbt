@@ -23,14 +23,14 @@ lazy val root = project
   .settings(
     organization := "org.textus",
     name := "textus-blog",
-    version := "0.0.2-SNAPSHOT",
+    version := "0.0.2",
 
     scalaVersion := scala3Version,
 
     resolvers += Resolver.defaultLocal,
     resolvers += Resolver.file("Local Ivy", file(Path.userHome.absolutePath + "/.ivy2/local"))(Resolver.ivyStylePatterns),
     resolvers += "Local Maven Repository" at ("file://" + Path.userHome.absolutePath + "/.m2/repository"),
-    resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/maven",
+    resolvers += "SimpleModeling.org" at "https://www.simplemodeling.org/repository/maven",
 
     libraryDependencies += "com.novocode" % "junit-interface" % "0.11" % "test",
     libraryDependencies += "org.typelevel" %% "cats-core" % "2.7.0",
@@ -63,10 +63,24 @@ lazy val root = project
     cozySimpleModelingModelVersion := simpleModelingModelVersion,
     cozyCncfCollaboratorApiVersion := cncfCollaboratorApiVersion,
     cozyManifestMetadata ++= Map(
-      "component" -> "blog-component",
+      "component" -> "textus-blog",
       "boundedContext" -> "content",
       "domain" -> "blog"
     ),
+    versionScheme := Some("early-semver"),
+    publishMavenStyle := true,
+    publishTo := {
+      val repo = sys.env.get("SIMPLEMODELING_MAVEN_LOCAL")
+        .map(file)
+        .getOrElse(baseDirectory.value / "maven-local")
+
+      Some(
+        Resolver.file(
+          "local-simplemodeling-maven",
+          repo
+        )
+      )
+    },
 
     Compile / sourceGenerators += Def.task {
       val out = (Compile / sourceManaged).value / "domain" / "meta" / "BuildVersion.scala"

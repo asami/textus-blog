@@ -1,11 +1,11 @@
 const paths = {
   session: "/web/blog/session",
-  get: "/form-api/blog-component/blog/get-post",
-  getMy: "/form-api/blog-component/blog/get-my-post",
-  save: "/form-api/blog-component/blog/save-editor-post",
-  importTree: "/form-api/blog-component/blog/import-post-tree",
-  images: "/form-api/blog-component/blog/list-image-blobs",
-  tags: "/form-api/blog-component/blog/list-tags",
+  get: "/form-api/textus-blog/blog/get-post",
+  getMy: "/form-api/textus-blog/blog/get-my-post",
+  save: "/form-api/textus-blog/blog/save-editor-post",
+  importTree: "/form-api/textus-blog/blog/import-post-tree",
+  images: "/form-api/textus-blog/blog/list-image-blobs",
+  tags: "/form-api/textus-blog/blog/list-tags",
   jobs: "/rest/v1/job_control/job/await_job_result"
 };
 
@@ -383,7 +383,7 @@ async function importPostTree(event) {
     notice("Imported.");
     els.uploadForm.reset();
     hideModalElement(els.uploadDialog);
-    location.href = "/form/blog-component/blog/search-my-posts/result?textus.form.page=userblogs&limit=100&includeDescendants=true";
+    location.href = "/form/textus-blog/blog/search-my-posts/result?textus.form.page=userblogs&limit=100&includeDescendants=true";
   } catch (error) {
     notice(error.message, true);
   }

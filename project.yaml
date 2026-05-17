@@ -1,0 +1,30 @@
+project:
+  name: textus-blog
+  title: Textus Blog Component
+  path: components/textus/blog
+  kind: car
+  summary: Blog component for Textus applications.
+  summary_i18n:
+    ja: Textus アプリケーション向けのブログコンポーネントです。
+  description: Provides public blog pages, author post management, rich HTML post editing, file-tree import, Atom feed, and Blog administration as a reusable CNCF component.
+  description_i18n:
+    ja: >
+      公開ブログ画面、投稿者向け投稿管理、HTML 投稿編集、
+      ファイルツリー取り込み、Atom feed、Blog 管理画面を
+      再利用可能な CNCF コンポーネントとして提供します。
+
+publication:
+  source_manifest:
+    enabled: false
+
+packaging:
+  kind: car
+  car:
+    source_dir: src/main/car
+
+warehouse:
+  repository_artifacts:
+    include:
+      - car
+    modules:
+      - textus-blog

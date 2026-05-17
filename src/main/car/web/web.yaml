@@ -1,6 +1,6 @@
 defaultView: summary
 shell:
-  component: blog-component
+  component: textus-blog
   app: blog
   layout: default
 apps:
@@ -35,24 +35,24 @@ pages:
     mode: article
 
 expose:
-  blog-component.blog.import-post-tree: protected
-  blog-component.blog.register-post: protected
-  blog-component.blog.save-editor-post: protected
-  blog-component.blog.list-image-blobs: protected
-  blog-component.blog.create-post: protected
-  blog-component.blog.get-post: public
-  blog-component.blog.get-my-post: protected
-  blog-component.blog.search-posts: public
-  blog-component.blog.search-my-posts: protected
-  blog-component.blog.atom-feed: public
-  blog-component.blog.publish-post: protected
-  blog-component.blog.deactivate-post: protected
-  blog-component.blog.sync-inline-images: protected
-  blog-component.blog.search-inline-images: public
-  blog-component.blog.list-tags: public
+  textus-blog.blog.import-post-tree: protected
+  textus-blog.blog.register-post: protected
+  textus-blog.blog.save-editor-post: protected
+  textus-blog.blog.list-image-blobs: protected
+  textus-blog.blog.create-post: protected
+  textus-blog.blog.get-post: public
+  textus-blog.blog.get-my-post: protected
+  textus-blog.blog.search-posts: public
+  textus-blog.blog.search-my-posts: protected
+  textus-blog.blog.atom-feed: public
+  textus-blog.blog.publish-post: protected
+  textus-blog.blog.deactivate-post: protected
+  textus-blog.blog.sync-inline-images: protected
+  textus-blog.blog.search-inline-images: public
+  textus-blog.blog.list-tags: public
 
 form:
-  blog-component.blog.import-post-tree:
+  textus-blog.blog.import-post-tree:
     enabled: true
     layout: plain-result
     successRedirect: /web/blog/userblogs
@@ -62,7 +62,7 @@ form:
         type: file
         accept: .zip,application/zip
         required: true
-  blog-component.blog.save-editor-post:
+  textus-blog.blog.save-editor-post:
     enabled: true
     layout: plain-result
     controls:
@@ -73,20 +73,7 @@ form:
       content:
         type: textarea
         required: true
-  blog-component.blog.register-post:
-    enabled: true
-    layout: plain-result
-    successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
-    stayOnError: true
-    controls:
-      contentMarkup:
-        type: select
-        values: [html-fragment, markdown-gfm, smartdox]
-        required: false
-      content:
-        type: textarea
-        required: true
-  blog-component.blog.create-post:
+  textus-blog.blog.register-post:
     enabled: true
     layout: plain-result
     successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
@@ -99,25 +86,38 @@ form:
       content:
         type: textarea
         required: true
-  blog-component.blog.search-posts:
+  textus-blog.blog.create-post:
+    enabled: true
+    layout: plain-result
+    successRedirect: /web/${component}/admin/entities/blog-post/${result.id}
+    stayOnError: true
+    controls:
+      contentMarkup:
+        type: select
+        values: [html-fragment, markdown-gfm, smartdox]
+        required: false
+      content:
+        type: textarea
+        required: true
+  textus-blog.blog.search-posts:
     enabled: true
     layout: reader
     stayOnError: true
-  blog-component.blog.search-my-posts:
+  textus-blog.blog.search-my-posts:
     enabled: true
     layout: my
     stayOnError: true
-  blog-component.blog.get-post:
+  textus-blog.blog.get-post:
     enabled: true
     layout: reader
-  blog-component.blog.get-my-post:
+  textus-blog.blog.get-my-post:
     enabled: true
     layout: result-edit
-  blog-component.blog.search-inline-images:
+  textus-blog.blog.search-inline-images:
     enabled: true
     successRedirect: /web/${component}/admin/entities/blog-inline-image
     stayOnError: true
-  blog-component.blog.list-tags:
+  textus-blog.blog.list-tags:
     enabled: true
 
 admin:
@@ -129,6 +129,6 @@ admin:
 routes:
   - path: /web/blog
     target:
-      component: blog-component
+      component: textus-blog
       app: blog
     kind: alias

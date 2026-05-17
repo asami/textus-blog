@@ -1,2 +1,4 @@
 resolvers += Resolver.defaultLocal
-addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.5-SNAPSHOT")
+resolvers += Resolver.mavenLocal
+
+addSbtPlugin("org.goldenport" % "sbt-cozy" % "0.1.6")

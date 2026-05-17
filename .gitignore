@@ -4,4 +4,5 @@ target/
 .scala-build/
 .cache/
 .textus.conf
+.cozy
 repository.d/
